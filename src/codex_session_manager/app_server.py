@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import os
 import queue
+import selectors
 import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from .models import Preview, Session, normalize_epoch
 from .repository import clean_user_text
@@ -146,6 +147,11 @@ class AppServerClient:
         self._timed_out_ids: set[int] = set()
         self._closed = False
         self._reader: threading.Thread | None = None
+        self._state_lock = threading.Lock()
+        self._terminal_error: str | None = None
+        self._cleanup_lock = threading.Lock()
+        self._cleanup_started = False
+        self._reaper: threading.Thread | None = None
 
     def list_sessions(self) -> list[Session]:
         """Return all non-archived Codex CLI threads, ordered by recency."""
@@ -197,32 +203,139 @@ class AppServerClient:
         with self._request_lock:
             if self._closed:
                 return
-            self._closed = True
+            with self._state_lock:
+                self._closed = True
             process = self._process
             if process is None:
                 return
             if process.stdin is not None:
                 try:
                     process.stdin.close()
-                except OSError:
+                except (OSError, ValueError):
                     pass
-            if process.poll() is None:
-                process.terminate()
+            if self._claim_cleanup():
+                self._shutdown_bounded(process)
+            reader = self._reader
+            if reader is not None and reader is not threading.current_thread():
+                reader.join(timeout=max(0.0, self.timeout))
+            if reader is not None and reader.is_alive():
+                self._start_stream_cleanup(process)
+            else:
+                self._close_stdout(process)
+
+    def _claim_cleanup(self) -> bool:
+        with self._cleanup_lock:
+            if self._cleanup_started:
+                return False
+            self._cleanup_started = True
+            return True
+
+    def _wait_bounded(self, process: subprocess.Popen[str]) -> bool:
+        try:
+            process.wait(timeout=max(0.0, self.timeout))
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except OSError:
+            return True
+
+    @staticmethod
+    def _signal_process(process: subprocess.Popen[str], method: str) -> None:
+        try:
+            getattr(process, method)()
+        except OSError:
+            pass
+
+    def _shutdown_bounded(self, process: subprocess.Popen[str]) -> None:
+        try:
+            running = process.poll() is None
+        except OSError:
+            running = False
+        if running:
+            self._signal_process(process, "terminate")
+        if self._wait_bounded(process):
+            return
+        self._signal_process(process, "kill")
+        if not self._wait_bounded(process):
+            self._start_late_cleanup(process)
+
+    def _start_terminal_cleanup(self) -> None:
+        process = self._process
+        if process is None or not self._claim_cleanup():
+            return
+        reaper = threading.Thread(
+            target=self._background_shutdown,
+            args=(process,),
+            daemon=True,
+        )
+        with self._cleanup_lock:
+            self._reaper = reaper
+        reaper.start()
+
+    def _background_shutdown(self, process: subprocess.Popen[str]) -> None:
+        try:
+            try:
+                running = process.poll() is None
+            except OSError:
+                running = False
+            if running:
+                self._signal_process(process, "terminate")
+            if not self._wait_bounded(process):
+                self._signal_process(process, "kill")
                 try:
-                    process.wait(timeout=self.timeout)
-                except subprocess.TimeoutExpired:
-                    process.kill()
                     process.wait()
-            if self._reader is not None:
-                self._reader.join(timeout=self.timeout)
-            if process.stdout is not None:
-                try:
-                    process.stdout.close()
                 except OSError:
                     pass
+        finally:
+            self._finish_stream_cleanup(process)
+
+    def _start_late_cleanup(self, process: subprocess.Popen[str]) -> None:
+        reaper = threading.Thread(
+            target=self._late_cleanup,
+            args=(process,),
+            daemon=True,
+        )
+        with self._cleanup_lock:
+            self._reaper = reaper
+        reaper.start()
+
+    def _start_stream_cleanup(self, process: subprocess.Popen[str]) -> None:
+        with self._cleanup_lock:
+            if self._reaper is not None and self._reaper.is_alive():
+                return
+            reaper = threading.Thread(
+                target=self._finish_stream_cleanup,
+                args=(process,),
+                daemon=True,
+            )
+            self._reaper = reaper
+        reaper.start()
+
+    def _late_cleanup(self, process: subprocess.Popen[str]) -> None:
+        try:
+            process.wait()
+        except OSError:
+            pass
+        self._finish_stream_cleanup(process)
+
+    def _finish_stream_cleanup(self, process: subprocess.Popen[str]) -> None:
+        reader = self._reader
+        if reader is not None and reader is not threading.current_thread():
+            reader.join()
+        self._close_stdout(process)
+
+    @staticmethod
+    def _close_stdout(process: subprocess.Popen[str]) -> None:
+        if process.stdout is None:
+            return
+        try:
+            process.stdout.close()
+        except (OSError, ValueError):
+            pass
 
     def _request(self, method: str, params: dict[str, Any]) -> Any:
         with self._request_lock:
+            self._raise_terminal_error()
             self._ensure_started()
             return self._send_request(method, params)
 
@@ -244,10 +357,16 @@ class AppServerClient:
                 bufsize=1,
                 env=environment,
             )
+            if self._process.stdin is None:
+                raise OSError("App Server input is unavailable")
+            os.set_blocking(self._process.stdin.fileno(), False)
         except OSError as error:
+            if self._process is not None:
+                self.close()
             raise AppServerError("could not start Codex App Server") from error
         self._reader = threading.Thread(target=self._read_responses, daemon=True)
         self._reader.start()
+        deadline = time.monotonic() + self.timeout
         try:
             self._send_request(
                 "initialize",
@@ -258,22 +377,38 @@ class AppServerClient:
                     },
                     "capabilities": {"experimentalApi": False},
                 },
+                deadline=deadline,
             )
-            self._send_notification("initialized")
+            self._send_notification("initialized", deadline=deadline)
         except AppServerError:
             self.close()
             raise
 
-    def _send_notification(self, method: str) -> None:
-        self._write({"jsonrpc": "2.0", "method": method})
+    def _send_notification(self, method: str, *, deadline: float | None = None) -> None:
+        if deadline is None:
+            deadline = time.monotonic() + self.timeout
+        self._write(
+            {"jsonrpc": "2.0", "method": method},
+            deadline,
+            f"App Server request timed out: {method}",
+        )
 
-    def _send_request(self, method: str, params: dict[str, Any]) -> Any:
+    def _send_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Any:
+        if deadline is None:
+            deadline = time.monotonic() + self.timeout
         request_id = self._next_id
         self._next_id += 1
         self._write(
-            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+            deadline,
+            f"App Server request timed out: {method}",
         )
-        deadline = time.monotonic() + self.timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -315,35 +450,102 @@ class AppServerClient:
                 raise AppServerError("invalid App Server error")
             raise AppServerError(message)
 
-    def _write(self, message: dict[str, Any]) -> None:
+    def _write(
+        self,
+        message: dict[str, Any],
+        deadline: float,
+        timeout_message: str,
+    ) -> None:
+        self._raise_terminal_error()
         process = self._process
         if process is None or process.stdin is None or process.poll() is not None:
-            raise AppServerError("Codex App Server is not running")
+            self._fail_transport("Codex App Server is not running")
+        selector: selectors.BaseSelector | None = None
         try:
-            process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-            process.stdin.flush()
-        except (BrokenPipeError, OSError, ValueError) as error:
-            raise AppServerError("could not write to Codex App Server") from error
+            try:
+                payload = (json.dumps(message, ensure_ascii=False) + "\n").encode(
+                    "utf-8"
+                )
+                descriptor = process.stdin.fileno()
+                selector = selectors.DefaultSelector()
+                selector.register(descriptor, selectors.EVENT_WRITE)
+            except (OSError, UnicodeError, ValueError) as error:
+                self._fail_transport("could not write to Codex App Server", error)
+
+            remaining_payload = memoryview(payload)
+            while remaining_payload:
+                self._raise_terminal_error()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._fail_transport(timeout_message)
+                try:
+                    written = os.write(descriptor, remaining_payload)
+                except InterruptedError:
+                    continue
+                except BlockingIOError:
+                    try:
+                        ready = selector.select(remaining)
+                    except OSError as error:
+                        self._fail_transport("could not write to Codex App Server", error)
+                    if not ready:
+                        self._fail_transport(timeout_message)
+                    continue
+                except (BrokenPipeError, OSError, ValueError) as error:
+                    self._fail_transport("could not write to Codex App Server", error)
+                if written <= 0:
+                    self._fail_transport("could not write to Codex App Server")
+                remaining_payload = remaining_payload[written:]
+        finally:
+            if selector is not None:
+                selector.close()
+
+    def _raise_terminal_error(self) -> None:
+        with self._state_lock:
+            message = self._terminal_error
+        if message is not None:
+            raise AppServerError(message)
+
+    def _fail_transport(
+        self, message: str, cause: BaseException | None = None
+    ) -> NoReturn:
+        latched = self._latch_terminal_error(message)
+        if cause is None:
+            raise AppServerError(latched)
+        raise AppServerError(latched) from cause
+
+    def _latch_terminal_error(self, message: str) -> str:
+        publish = False
+        with self._state_lock:
+            if self._closed:
+                return message
+            if self._terminal_error is None:
+                self._terminal_error = message
+                publish = True
+            latched = self._terminal_error
+        if publish:
+            self._responses.put(AppServerError(latched))
+            self._start_terminal_cleanup()
+        return latched
 
     def _read_responses(self) -> None:
         process = self._process
         if process is None or process.stdout is None:
-            self._responses.put(AppServerError("Codex App Server output is unavailable"))
+            self._latch_terminal_error("Codex App Server output is unavailable")
             return
         try:
             for line in process.stdout:
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError as error:
-                    self._responses.put(AppServerError("malformed App Server JSON"))
+                    self._latch_terminal_error("malformed App Server JSON")
                     return
                 if not isinstance(message, dict):
-                    self._responses.put(AppServerError("malformed App Server response"))
+                    self._latch_terminal_error("malformed App Server response")
                     return
                 if "method" in message and "id" not in message:
                     continue
                 self._responses.put(message)
         except (OSError, UnicodeError) as error:
-            self._responses.put(AppServerError("could not read Codex App Server output"))
+            self._latch_terminal_error("could not read Codex App Server output")
             return
-        self._responses.put(AppServerError("Codex App Server closed its output"))
+        self._latch_terminal_error("Codex App Server closed its output")

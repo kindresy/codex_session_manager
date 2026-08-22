@@ -3,9 +3,11 @@ import stat
 import subprocess
 import tempfile
 import textwrap
+import threading
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from codex_session_manager.app_server import (
     AppServerClient,
@@ -160,6 +162,10 @@ class AppServerClientTests(unittest.TestCase):
                 log = home / "requests.jsonl"
                 late_response = False
 
+                if home.name == "blocked-stdin":
+                    time.sleep(1)
+                    raise SystemExit(0)
+
                 def record(message):
                     with log.open("a", encoding="utf-8") as stream:
                         stream.write(json.dumps({"message": message, "codex_home": os.environ.get("CODEX_HOME")}) + "\\n")
@@ -183,12 +189,24 @@ class AppServerClientTests(unittest.TestCase):
                     record(message)
                     method = message.get("method")
                     if method == "initialize":
+                        if home.name == "initialized-write-failure":
+                            os.close(sys.stdin.fileno())
                         send({"method": "thread/started", "params": {"thread": "ignore"}})
                         send({"id": message["id"], "result": {"userAgent": "fake"}})
+                        if home.name == "initialized-write-failure":
+                            time.sleep(1)
+                            raise SystemExit(0)
                     elif method == "thread/list":
                         if home.name == "timeout":
                             time.sleep(5)
                             continue
+                        if home.name == "malformed-terminal":
+                            sys.stdout.write("{malformed json\\n")
+                            sys.stdout.flush()
+                            time.sleep(1)
+                            continue
+                        if home.name == "eof-terminal":
+                            raise SystemExit(0)
                         if home.name == "late" and not late_response:
                             late_response = True
                             time.sleep(0.1)
@@ -322,6 +340,89 @@ class AppServerClientTests(unittest.TestCase):
         finally:
             client.close()
 
+    def test_request_deadline_covers_a_full_unread_stdin_pipe(self):
+        home = self.root / "blocked-stdin"
+        home.mkdir()
+        client = AppServerClient(
+            self.server,
+            home,
+            "x" * (2 * 1024 * 1024),
+            timeout=0.05,
+        )
+
+        started = time.monotonic()
+        try:
+            with self.assertRaisesRegex(AppServerError, "timed out"):
+                client.list_sessions()
+        finally:
+            client.close()
+
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_initialize_response_and_notification_share_one_deadline(self):
+        client, _ = self.make_client()
+        process = Mock()
+        process.stdin = Mock()
+        process.stdout = Mock()
+        process.poll.return_value = None
+
+        with (
+            patch("codex_session_manager.app_server.subprocess.Popen", return_value=process),
+            patch("codex_session_manager.app_server.os.set_blocking"),
+            patch("codex_session_manager.app_server.threading.Thread"),
+            patch.object(client, "_send_request", return_value={}) as request,
+            patch.object(client, "_send_notification") as notification,
+        ):
+            client._ensure_started()
+
+        request_deadline = request.call_args.kwargs["deadline"]
+        self.assertEqual(request_deadline, notification.call_args.kwargs["deadline"])
+
+    def test_initialized_write_failure_closes_and_reaps_child(self):
+        client, _ = self.make_client("initialized-write-failure", timeout=0.1)
+
+        with self.assertRaisesRegex(AppServerError, "could not write"):
+            client.list_sessions()
+
+        process = client._process
+        self.assertIsNotNone(process)
+        for _ in range(20):
+            if process.poll() is not None:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(process.poll())
+
+    def test_terminal_reader_errors_are_latched_for_reuse(self):
+        for home_name, expected in (
+            ("malformed-terminal", "malformed App Server JSON"),
+            ("eof-terminal", "Codex App Server closed its output"),
+        ):
+            with self.subTest(home_name=home_name):
+                client, home = self.make_client(home_name, timeout=0.1)
+                try:
+                    with self.assertRaisesRegex(AppServerError, expected) as first:
+                        client.list_sessions()
+                    started = time.monotonic()
+                    with self.assertRaises(AppServerError) as second:
+                        client.list_sessions()
+                    elapsed = time.monotonic() - started
+
+                    self.assertEqual(str(second.exception), str(first.exception))
+                    self.assertLess(elapsed, 0.05)
+                    methods = [
+                        entry["message"]["method"] for entry in self.requests(home)
+                    ]
+                    self.assertEqual(methods.count("thread/list"), 1)
+
+                    process = client._process
+                    for _ in range(20):
+                        if process.poll() is not None:
+                            break
+                        time.sleep(0.01)
+                    self.assertIsNotNone(process.poll())
+                finally:
+                    client.close()
+
     def test_late_timeout_response_does_not_poison_the_next_request(self):
         client, _ = self.make_client("late")
         try:
@@ -348,6 +449,54 @@ class AppServerClientTests(unittest.TestCase):
         self.assertIsNotNone(process)
         self.assertIsNotNone(process.poll())
         self.assertTrue(stdout.closed)
+
+    def test_close_returns_while_stubborn_process_is_reaped_later(self):
+        client, _ = self.make_client(timeout=0.05)
+        release_reaper = threading.Event()
+        late_wait_started = threading.Event()
+        close_returned = threading.Event()
+
+        class StubbornProcess:
+            def __init__(self):
+                self.stdin = Mock()
+                self.stdout = Mock()
+                self.wait_timeouts = []
+                self.terminate = Mock()
+                self.kill = Mock()
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                self.wait_timeouts.append(timeout)
+                if timeout is not None:
+                    raise subprocess.TimeoutExpired("fake-codex", timeout)
+                late_wait_started.set()
+                release_reaper.wait(1)
+                return 0
+
+        process = StubbornProcess()
+        client._process = process
+
+        worker = threading.Thread(
+            target=lambda: (client.close(), close_returned.set()), daemon=True
+        )
+        worker.start()
+        self.assertTrue(late_wait_started.wait(0.2))
+        try:
+            self.assertTrue(close_returned.wait(0.2))
+        finally:
+            release_reaper.set()
+            worker.join(1)
+
+        reaper = client._reaper
+        self.assertIsNotNone(reaper)
+        reaper.join(1)
+        self.assertFalse(reaper.is_alive())
+
+        self.assertEqual(process.wait_timeouts[:2], [client.timeout, client.timeout])
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
 
 
 if __name__ == "__main__":

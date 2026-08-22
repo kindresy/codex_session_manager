@@ -355,10 +355,20 @@ def _match_status(search: SearchState, selected: int) -> str:
     return f"匹配 {position}/{len(search.matches)}：{search.query}"
 
 
-def _repository_status(repository: Repository, resume_error: str) -> tuple[str, bool]:
+def _repository_status(
+    repository: Repository,
+    resume_error: str,
+    current_status: str = "",
+    current_error: bool = False,
+) -> tuple[str, bool]:
     if resume_error:
         return resume_error, True
-    return getattr(repository, "warning", ""), False
+    if current_status and current_error:
+        return current_status, current_error
+    warning = getattr(repository, "warning", "")
+    if warning:
+        return warning, False
+    return current_status, current_error
 
 
 def _event_loop(
@@ -378,36 +388,58 @@ def _event_loop(
     state = ViewState()
     search = SearchState()
     search_input: str | None = None
-    status, status_error = _repository_status(repository, resume_error)
+    status = ""
+    status_error = False
 
     while True:
         stdscr.erase()
         rows, cols = stdscr.getmaxyx()
         layout = calculate_layout(rows, cols)
         max_preview_offset = 0
-        _draw_chrome(stdscr, len(sessions), palette, status, search_input, status_error)
+        selected: Session | None = None
+        preview: Preview | None = None
+
+        if layout.mode != "small" and sessions:
+            state.selected = min(state.selected, len(sessions) - 1)
+            selected = sessions[state.selected]
+            preview = previews.get(selected)
+
+        display_status, display_error = _repository_status(
+            repository,
+            resume_error,
+            status,
+            status_error,
+        )
+        _draw_chrome(
+            stdscr,
+            len(sessions),
+            palette,
+            display_status,
+            search_input,
+            display_error,
+        )
 
         if layout.mode == "small":
             _draw_message(stdscr, "终端尺寸不足，需要至少 60×20", palette)
         elif not sessions:
             _draw_message(stdscr, "没有找到可恢复的 Codex CLI 会话，按 r 刷新", palette)
         else:
-            state.selected = min(state.selected, len(sessions) - 1)
+            assert selected is not None and preview is not None
             list_window = stdscr.derwin(*layout.list_rect[2:], *layout.list_rect[:2])
             preview_window = stdscr.derwin(*layout.preview_rect[2:], *layout.preview_rect[:2])
             _draw_list(list_window, sessions, state, palette)
-            selected = sessions[state.selected]
             max_preview_offset = _draw_preview(
                 preview_window,
                 selected,
-                previews.get(selected),
+                preview,
                 state,
                 palette,
             )
         stdscr.noutrefresh()
         curses.doupdate()
-        status, status_error = _repository_status(repository, resume_error)
         key = stdscr.get_wch()
+        status = ""
+        status_error = False
 
         if search_input is not None:
             code = _key_code(key)
@@ -466,8 +498,7 @@ def _event_loop(
                 )
                 state.list_offset = 0
                 state.preview_offset = 0
-                status, status_error = _repository_status(repository, resume_error)
-                if not status:
+                if not getattr(repository, "warning", ""):
                     status = f"已刷新：{len(sessions)} 个会话"
             except Exception as error:  # curses must stay usable after an I/O failure
                 status = f"刷新失败：{error}"

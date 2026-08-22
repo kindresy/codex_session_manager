@@ -34,6 +34,7 @@ class CliTests(unittest.TestCase):
                 return_value="/opt/codex/bin/codex",
             ),
             patch("codex_session_manager.cli.AppServerClient") as client_type,
+            patch("codex_session_manager.cli.CompatibilityState") as state_type,
             patch("codex_session_manager.cli.SessionRepository") as repository_type,
             patch("codex_session_manager.cli.PreviewService") as preview_type,
             patch(
@@ -52,10 +53,15 @@ class CliTests(unittest.TestCase):
         preview_type.assert_called_once_with()
         client_type.assert_called_once_with("/opt/codex/bin/codex", home, __version__)
         compatible_repository_type.assert_called_once_with(
-            client_type.return_value, repository_type.return_value
+            client_type.return_value,
+            repository_type.return_value,
+            state_type.return_value,
         )
         compatible_preview_type.assert_called_once_with(
-            client_type.return_value, preview_type.return_value
+            client_type.return_value,
+            repository_type.return_value,
+            preview_type.return_value,
+            state_type.return_value,
         )
         run_tui.assert_called_once_with(
             compatible_repository_type.return_value,
@@ -98,29 +104,52 @@ class CliTests(unittest.TestCase):
     def test_quitting_tui_returns_success(self, _which, _run_tui):
         self.assertEqual(main([]), 0)
 
-    @patch("codex_session_manager.cli.os.execvp")
-    def test_resume_command_executes_exact_uuid(self, execvp):
-        resume_command("12345678-abcd")
-        execvp.assert_called_once_with(
-            "codex", ["codex", "resume", "12345678-abcd"]
+    @patch("codex_session_manager.cli.os.execvpe")
+    def test_resume_command_uses_resolved_executable_home_and_exact_full_id(
+        self, execvpe
+    ):
+        session_id = "会话-12345678-abcd-ef00-0123456789ab"
+        codex_path = "/opt/codex/bin/codex"
+        codex_home = Path("/tmp/自定义-codex")
+
+        with patch.dict(
+            os.environ,
+            {"CODEX_HOME": "/tmp/from-env", "KEEP": "preserved"},
+            clear=True,
+        ):
+            resume_command(session_id, codex_path, codex_home)
+            self.assertEqual(os.environ["CODEX_HOME"], "/tmp/from-env")
+
+        execvpe.assert_called_once_with(
+            codex_path,
+            ["codex", "resume", session_id],
+            {"CODEX_HOME": str(codex_home), "KEEP": "preserved"},
         )
 
     def test_app_server_closes_before_resume_handoff(self):
         lifecycle = Mock()
+        session_id = "会话-12345678-abcd-ef00-0123456789ab"
         with (
             patch("codex_session_manager.cli.shutil.which", return_value="/usr/bin/codex"),
             patch("codex_session_manager.cli.AppServerClient") as client_type,
-            patch("codex_session_manager.cli.run_tui", return_value="12345678-abcd"),
+            patch("codex_session_manager.cli.run_tui", return_value=session_id),
             patch("codex_session_manager.cli.resume_command") as resume,
         ):
             lifecycle.attach_mock(client_type.return_value.close, "close")
             lifecycle.attach_mock(resume, "resume")
-            result = main([])
+            result = main(["--codex-home", "/tmp/from-flag"])
 
         self.assertEqual(result, 0)
         self.assertEqual(
             lifecycle.mock_calls,
-            [call.close(), call.resume("12345678-abcd")],
+            [
+                call.close(),
+                call.resume(
+                    session_id,
+                    "/usr/bin/codex",
+                    Path("/tmp/from-flag"),
+                ),
+            ],
         )
 
     def test_app_server_closes_when_tui_raises(self):
@@ -135,13 +164,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result, 2)
         client_type.return_value.close.assert_called_once_with()
 
-    @patch("codex_session_manager.cli.os.execvp")
-    @patch("codex_session_manager.cli.run_tui", return_value="12345678-abcd")
+    @patch("codex_session_manager.cli.os.execvpe")
+    @patch(
+        "codex_session_manager.cli.run_tui",
+        return_value="会话-12345678-abcd-ef00-0123456789ab",
+    )
     @patch("codex_session_manager.cli.shutil.which", return_value="/usr/bin/codex")
-    def test_selected_session_is_resumed(self, _which, _run_tui, execvp):
-        self.assertEqual(main([]), 0)
-        execvp.assert_called_once_with(
-            "codex", ["codex", "resume", "12345678-abcd"]
+    def test_selected_session_is_resumed_with_effective_environment(
+        self, _which, _run_tui, execvpe
+    ):
+        with patch.dict(
+            os.environ,
+            {"CODEX_HOME": "/tmp/original", "KEEP": "preserved"},
+            clear=True,
+        ):
+            self.assertEqual(
+                main(["--codex-home", "/tmp/from-flag"]),
+                0,
+            )
+
+        execvpe.assert_called_once_with(
+            "/usr/bin/codex",
+            ["codex", "resume", "会话-12345678-abcd-ef00-0123456789ab"],
+            {"CODEX_HOME": "/tmp/from-flag", "KEEP": "preserved"},
         )
 
 

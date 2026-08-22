@@ -12,7 +12,11 @@ from typing import Sequence
 
 from . import __version__
 from .app_server import AppServerClient
-from .compatibility import CompatiblePreviewService, CompatibleSessionRepository
+from .compatibility import (
+    CompatibilityState,
+    CompatiblePreviewService,
+    CompatibleSessionRepository,
+)
 from .preview import PreviewService
 from .repository import SessionRepository
 from .tui import run_tui
@@ -50,8 +54,14 @@ def resolve_codex_home(explicit: Path | None) -> Path:
     return Path.home() / ".codex"
 
 
-def resume_command(session_id: str) -> None:
-    os.execvp("codex", ["codex", "resume", session_id])
+def resume_command(session_id: str, codex_path: str, codex_home: Path) -> None:
+    environment = os.environ.copy()
+    environment["CODEX_HOME"] = str(codex_home)
+    os.execvpe(
+        codex_path,
+        ["codex", "resume", session_id],
+        environment,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -60,14 +70,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     resume_error = "" if codex_path else "在 PATH 中找不到 codex，当前只能浏览会话"
     codex_home = resolve_codex_home(args.codex_home)
 
-    repository = SessionRepository(codex_home)
-    previews = PreviewService()
+    local_repository = SessionRepository(codex_home)
+    local_previews = PreviewService()
+    repository = local_repository
+    previews = local_previews
     app_server: AppServerClient | None = None
     try:
         if codex_path:
             app_server = AppServerClient(codex_path, codex_home, __version__)
-            repository = CompatibleSessionRepository(app_server, repository)
-            previews = CompatiblePreviewService(app_server, previews)
+            compatibility = CompatibilityState()
+            repository = CompatibleSessionRepository(
+                app_server, local_repository, compatibility
+            )
+            previews = CompatiblePreviewService(
+                app_server,
+                local_repository,
+                local_previews,
+                compatibility,
+            )
         try:
             tui_options = {"use_color": not args.no_color}
             if resume_error:
@@ -88,7 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"错误：{resume_error}", file=sys.stderr)
         return 2
     try:
-        resume_command(selected_id)
+        resume_command(selected_id, codex_path, codex_home)
     except OSError as error:
         print(f"错误：无法启动 codex resume：{error}", file=sys.stderr)
         return 2

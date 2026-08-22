@@ -251,8 +251,9 @@ class SearchEventLoopTests(unittest.TestCase):
             Session("22222222-2222", "另一个目标", "/tmp/gamma", 1.0, 2.0, "/tmp/2"),
         ]
 
-    def run_loop(self, keys, repository=None, resume_error=""):
+    def run_loop(self, keys, repository=None, resume_error="", previews=None):
         repository = repository or self.Repository(self.sessions)
+        previews = previews or self.Previews()
         with (
             patch("codex_session_manager.tui.curses.curs_set"),
             patch("codex_session_manager.tui.curses.doupdate"),
@@ -263,7 +264,7 @@ class SearchEventLoopTests(unittest.TestCase):
             patch("codex_session_manager.tui._draw_chrome") as chrome,
         ):
             selected = _event_loop(
-                self.FakeScreen(keys), repository, self.Previews(), True, resume_error
+                self.FakeScreen(keys), repository, previews, True, resume_error
             )
         return selected, repository, preview, chrome
 
@@ -332,6 +333,89 @@ class SearchEventLoopTests(unittest.TestCase):
         self.assertIsNone(selected)
         self.assertEqual(chrome.call_args_list[0].args[3], repository.warning)
         self.assertFalse(chrome.call_args_list[0].args[5])
+
+    def test_preview_warning_is_visible_on_the_same_frame(self):
+        repository = self.Repository(self.sessions)
+        repository.warning = ""
+
+        class DegradingPreviews(self.Previews):
+            def get(inner_self, session):
+                repository.warning = "预览已切换到本地兼容模式"
+                return super(DegradingPreviews, inner_self).get(session)
+
+        selected, _, _, chrome = self.run_loop(
+            ("q",), repository, previews=DegradingPreviews()
+        )
+
+        self.assertIsNone(selected)
+        self.assertEqual(
+            chrome.call_args_list[0].args[3],
+            "预览已切换到本地兼容模式",
+        )
+        self.assertFalse(chrome.call_args_list[0].args[5])
+
+    def test_preview_warning_does_not_override_missing_codex_error(self):
+        repository = self.Repository(self.sessions)
+        repository.warning = ""
+
+        class DegradingPreviews(self.Previews):
+            def get(inner_self, session):
+                repository.warning = "预览已切换到本地兼容模式"
+                return super(DegradingPreviews, inner_self).get(session)
+
+        selected, _, _, chrome = self.run_loop(
+            ("q",),
+            repository,
+            "在 PATH 中找不到 codex",
+            DegradingPreviews(),
+        )
+
+        self.assertIsNone(selected)
+        self.assertEqual(chrome.call_args_list[0].args[3], "在 PATH 中找不到 codex")
+        self.assertTrue(chrome.call_args_list[0].args[5])
+
+    def test_preview_warning_does_not_override_search_failure(self):
+        repository = self.Repository(self.sessions)
+        repository.warning = ""
+
+        class DegradingPreviews(self.Previews):
+            def get(inner_self, session):
+                repository.warning = "预览已切换到本地兼容模式"
+                return super(DegradingPreviews, inner_self).get(session)
+
+        selected, _, _, chrome = self.run_loop(
+            ("/", "不", "存", "在", "\n", "q"),
+            repository,
+            previews=DegradingPreviews(),
+        )
+
+        self.assertIsNone(selected)
+        failure = next(
+            call for call in chrome.call_args_list if call.args[3] == "未找到：不存在"
+        )
+        self.assertTrue(failure.args[5])
+
+    def test_preview_warning_outranks_informational_match_status(self):
+        repository = self.Repository(self.sessions)
+        repository.warning = ""
+
+        class DegradingPreviews(self.Previews):
+            def get(inner_self, session):
+                repository.warning = "预览已切换到本地兼容模式"
+                return super(DegradingPreviews, inner_self).get(session)
+
+        selected, _, _, chrome = self.run_loop(
+            ("/", "目", "标", "\n", "q"),
+            repository,
+            previews=DegradingPreviews(),
+        )
+
+        self.assertIsNone(selected)
+        self.assertEqual(
+            chrome.call_args_list[-1].args[3],
+            "预览已切换到本地兼容模式",
+        )
+        self.assertFalse(chrome.call_args_list[-1].args[5])
 
     def test_refresh_updates_repository_warning(self):
         class WarningRepository(self.Repository):
