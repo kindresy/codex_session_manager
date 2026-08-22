@@ -16,7 +16,7 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
             main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "codex-session 0.1.0")
+        self.assertEqual(output.getvalue().strip(), "codex-session 0.2.0")
 
     def test_help_exits_successfully(self):
         output = io.StringIO()

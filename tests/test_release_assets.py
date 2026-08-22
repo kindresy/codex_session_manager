@@ -9,6 +9,7 @@ class ReleaseAssetTests(unittest.TestCase):
     def test_project_metadata(self):
         metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         required = (
+            'version = "0.2.0"',
             'readme = "README.md"',
             'license = "MIT"',
             'license-files = ["LICENSE"]',
@@ -29,6 +30,12 @@ class ReleaseAssetTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, metadata)
         self.assertNotIn('"License :: OSI Approved :: MIT License"', metadata)
+
+    def test_package_version(self):
+        package = (ROOT / "src" / "codex_session_manager" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('__version__ = "0.2.0"', package)
 
     def test_mit_license(self):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
@@ -93,7 +100,7 @@ class ReleaseAssetTests(unittest.TestCase):
 
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("python tests/verify_distribution.py", workflow)
-        self.assertIn("sdist-test/codex_session_manager-0.1.0", workflow)
+        self.assertIn("sdist-test/codex_session_manager-0.2.0", workflow)
 
     def test_readme_public_usage(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -128,6 +135,11 @@ class ReleaseAssetTests(unittest.TestCase):
             "不扫描完整会话内容",
             "不区分大小写",
             "`n` / `N`",
+            "Codex App Server",
+            "本地 SQLite/JSONL 兼容模式",
+            "自动切换",
+            "无需修改源码",
+            "升级 codex-session-manager",
         )
         for value in required:
             with self.subTest(value=value):

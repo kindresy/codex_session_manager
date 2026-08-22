@@ -46,7 +46,7 @@ jobs:
       - name: Test source distribution
         run: |
           python -m tarfile -e dist/*.tar.gz sdist-test
-          cd sdist-test/codex_session_manager-0.1.0
+          cd sdist-test/codex_session_manager-0.2.0
           PYTHONPATH=src python -m unittest discover -s tests -v
 
       - name: Install wheel
