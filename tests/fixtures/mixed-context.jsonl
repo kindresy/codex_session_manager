@@ -1,0 +1,5 @@
+{"timestamp":"2026-08-22T12:00:00Z","type":"session_meta","payload":{"id":"preview-fixture","cwd":"/tmp/fixture","source":"cli"}}
+{"timestamp":"2026-08-22T12:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>synthetic environment</environment_context>\n\nfixture first question"}]}}
+{"timestamp":"2026-08-22T12:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fixture first answer"}]}}
+{"timestamp":"2026-08-22T12:00:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fixture latest question"}]}}
+{"timestamp":"2026-08-22T12:00:04Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fixture latest answer"}]}}
