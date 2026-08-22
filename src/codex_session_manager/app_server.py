@@ -9,6 +9,7 @@ import selectors
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -18,6 +19,12 @@ from .repository import clean_user_text
 
 class AppServerError(RuntimeError):
     """Raised when an App Server response or transport is incompatible."""
+
+
+@dataclass(frozen=True)
+class _QueuedResponse:
+    message: dict[str, Any]
+    arrived_at: float
 
 
 def _object(value: Any, description: str) -> dict[str, Any]:
@@ -141,7 +148,7 @@ class AppServerClient:
         self.version = version
         self.timeout = timeout
         self._process: subprocess.Popen[str] | None = None
-        self._responses: queue.Queue[dict[str, Any] | AppServerError] = queue.Queue()
+        self._responses: queue.Queue[_QueuedResponse | AppServerError] = queue.Queue()
         self._request_lock = threading.RLock()
         self._next_id = 1
         self._timed_out_ids: set[int] = set()
@@ -411,19 +418,17 @@ class AppServerClient:
         )
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                self._timed_out_ids.add(request_id)
-                raise AppServerError(f"App Server request timed out: {method}")
             try:
-                response = self._responses.get(timeout=remaining)
+                queued = self._responses.get(timeout=max(0.0, remaining))
             except queue.Empty as error:
                 process = self._process
                 if process is not None and process.poll() is not None:
                     raise AppServerError("Codex App Server exited") from error
                 self._timed_out_ids.add(request_id)
                 raise AppServerError(f"App Server request timed out: {method}") from error
-            if isinstance(response, AppServerError):
-                raise response
+            if isinstance(queued, AppServerError):
+                raise queued
+            response = queued.message
             response_id = response.get("id")
             if type(response_id) is not int:
                 raise AppServerError("invalid App Server response id")
@@ -432,6 +437,8 @@ class AppServerClient:
                 continue
             if response_id != request_id:
                 raise AppServerError("unexpected App Server response id")
+            if queued.arrived_at > deadline:
+                raise AppServerError(f"App Server request timed out: {method}")
             has_result = "result" in response
             has_error = "error" in response
             if has_result == has_error:
@@ -534,6 +541,7 @@ class AppServerClient:
             return
         try:
             for line in process.stdout:
+                arrived_at = time.monotonic()
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError as error:
@@ -544,7 +552,7 @@ class AppServerClient:
                     return
                 if "method" in message and "id" not in message:
                     continue
-                self._responses.put(message)
+                self._responses.put(_QueuedResponse(message, arrived_at))
         except (OSError, UnicodeError) as error:
             self._latch_terminal_error("could not read Codex App Server output")
             return

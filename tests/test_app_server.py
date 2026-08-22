@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from codex_session_manager.app_server import (
     AppServerClient,
     AppServerError,
+    _QueuedResponse,
     parse_preview,
     parse_thread,
 )
@@ -436,6 +437,41 @@ class AppServerClientTests(unittest.TestCase):
             client.close()
 
         self.assertEqual([session.id for session in sessions], ["thread-two", "thread-one"])
+
+    def test_response_arriving_after_deadline_times_out_when_already_queued(self):
+        client, _ = self.make_client(timeout=0.05)
+        client._responses.put(
+            _QueuedResponse({"id": 1, "result": {"status": "too late"}}, 100.1)
+        )
+
+        with (
+            patch.object(client, "_write"),
+            patch(
+                "codex_session_manager.app_server.time.monotonic",
+                side_effect=[100.0, 100.0],
+            ),
+            self.assertRaisesRegex(AppServerError, "timed out"),
+        ):
+            client._send_request("thread/list", {})
+
+        self.assertEqual(client._timed_out_ids, set())
+
+    def test_response_arriving_before_deadline_survives_consumer_delay(self):
+        client, _ = self.make_client(timeout=0.05)
+        client._responses.put(
+            _QueuedResponse({"id": 1, "result": {"status": "on time"}}, 100.04)
+        )
+
+        with (
+            patch.object(client, "_write"),
+            patch(
+                "codex_session_manager.app_server.time.monotonic",
+                side_effect=[100.0, 100.2],
+            ),
+        ):
+            result = client._send_request("thread/list", {})
+
+        self.assertEqual(result, {"status": "on time"})
 
     def test_close_is_idempotent_and_reaps_child(self):
         client, _ = self.make_client()
