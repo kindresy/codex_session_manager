@@ -1,8 +1,11 @@
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from codex_session_manager.repository import (
@@ -240,10 +243,33 @@ class RepositoryTests(unittest.TestCase):
 
         session = SessionRepository(self.home)._parse_rollout(path)
 
-        expected = datetime.strptime(
-            "2026-08-22T20-05-43", "%Y-%m-%dT%H-%M-%S"
-        ).replace(tzinfo=timezone.utc).timestamp()
+        expected = datetime.strptime("2026-08-22T20-05-43", "%Y-%m-%dT%H-%M-%S").timestamp()
         self.assertEqual(session.created_at, expected)
+
+    def test_filename_timestamp_uses_host_local_timezone(self):
+        project_root = Path(__file__).resolve().parents[1]
+        script = (
+            "import time; time.tzset(); "
+            "from pathlib import Path; "
+            "from codex_session_manager.repository import SessionRepository; "
+            "print(SessionRepository._filename_timestamp("
+            "Path('rollout-2026-08-22T20-05-43-fixture.jsonl')))"
+        )
+        environment = os.environ.copy()
+        environment["TZ"] = "Asia/Shanghai"
+        environment["PYTHONPATH"] = str(project_root / "src")
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        china = timezone(timedelta(hours=8))
+        expected = datetime(2026, 8, 22, 20, 5, 43, tzinfo=china).timestamp()
+        self.assertEqual(float(result.stdout), expected)
 
     def test_clean_user_text_ignores_injected_context(self):
         self.assertEqual(clean_user_text("<environment_context>x</environment_context>"), "")
