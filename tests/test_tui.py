@@ -112,6 +112,9 @@ class ViewStateTests(unittest.TestCase):
         self.assertEqual(state.handle_key(10, 2, 12), "select")
         self.assertEqual(state.handle_key(ord("q"), 2, 12), "quit")
         self.assertEqual(state.handle_key(27, 2, 12), "quit")
+        self.assertEqual(state.handle_key("/", 2, 12), "search")
+        self.assertEqual(state.handle_key("n", 2, 12), "next_match")
+        self.assertEqual(state.handle_key("N", 2, 12), "previous_match")
 
     def test_ensure_visible_tracks_selected_row(self):
         state = ViewState(selected=8)
@@ -140,7 +143,7 @@ class ViewStateTests(unittest.TestCase):
             def noutrefresh(self):
                 pass
 
-            def getch(self):
+            def get_wch(self):
                 return next(self.keys)
 
             def derwin(self, *_args):
@@ -169,6 +172,106 @@ class ViewStateTests(unittest.TestCase):
         self.assertIsNone(selected)
         statuses = [call.args[3] for call in chrome.call_args_list]
         self.assertIn("找不到 codex", statuses)
+
+
+class SearchEventLoopTests(unittest.TestCase):
+    class FakeScreen:
+        def __init__(self, keys):
+            self.keys = iter(keys)
+
+        def keypad(self, _enabled):
+            pass
+
+        def getmaxyx(self):
+            return (40, 140)
+
+        def erase(self):
+            pass
+
+        def noutrefresh(self):
+            pass
+
+        def get_wch(self):
+            return next(self.keys)
+
+        def derwin(self, *_args):
+            return object()
+
+    class Repository:
+        def __init__(self, sessions):
+            self.sessions = sessions
+            self.calls = 0
+
+        def list_sessions(self):
+            self.calls += 1
+            return list(self.sessions)
+
+    class Previews:
+        def get(self, session):
+            return Preview(session.first_question, session.first_question, "回答")
+
+    def setUp(self):
+        self.sessions = [
+            Session("00000000-0000", "普通会话", "/tmp/alpha", 1.0, 2.0, "/tmp/0"),
+            Session("11111111-1111", "目标问题", "/tmp/beta", 1.0, 2.0, "/tmp/1"),
+            Session("22222222-2222", "另一个目标", "/tmp/gamma", 1.0, 2.0, "/tmp/2"),
+        ]
+
+    def run_loop(self, keys, repository=None):
+        repository = repository or self.Repository(self.sessions)
+        with (
+            patch("codex_session_manager.tui.curses.curs_set"),
+            patch("codex_session_manager.tui.curses.doupdate"),
+            patch("codex_session_manager.tui._init_palette"),
+            patch("codex_session_manager.tui._draw_list"),
+            patch("codex_session_manager.tui._draw_preview", return_value=0) as preview,
+            patch("codex_session_manager.tui._draw_chrome") as chrome,
+        ):
+            selected = _event_loop(
+                self.FakeScreen(keys), repository, self.Previews(), True
+            )
+        return selected, repository, preview, chrome
+
+    def test_unicode_query_selects_matching_session(self):
+        selected, _, _, _ = self.run_loop(("/", "目", "标", "\n", "\n"))
+
+        self.assertEqual(selected, "11111111-1111")
+
+    def test_n_jumps_to_next_match(self):
+        selected, _, _, _ = self.run_loop(("/", "目", "标", "\n", "n", "\n"))
+
+        self.assertEqual(selected, "22222222-2222")
+
+    def test_backspace_edits_query_and_escape_cancels(self):
+        selected, _, _, _ = self.run_loop(
+            ("/", "错", "\x7f", "目", "标", "\n", "\n")
+        )
+        self.assertEqual(selected, "11111111-1111")
+
+        selected, _, preview, _ = self.run_loop(("/", "目", "\x1b", "q"))
+        self.assertIsNone(selected)
+        previewed_ids = [call.args[1].id for call in preview.call_args_list]
+        self.assertEqual(set(previewed_ids), {"00000000-0000"})
+
+    def test_no_match_keeps_selection_and_reports_status(self):
+        selected, _, preview, chrome = self.run_loop(("/", "不存在", "\n", "q"))
+
+        self.assertIsNone(selected)
+        previewed_ids = [call.args[1].id for call in preview.call_args_list]
+        self.assertEqual(set(previewed_ids), {"00000000-0000"})
+        statuses = [call.args[3] for call in chrome.call_args_list]
+        self.assertIn("未找到：不存在", statuses)
+
+    def test_reload_clears_matches(self):
+        repository = self.Repository(self.sessions)
+        selected, repository, _, chrome = self.run_loop(
+            ("/", "目标", "\n", "r", "n", "q"), repository
+        )
+
+        self.assertIsNone(selected)
+        self.assertEqual(repository.calls, 2)
+        statuses = [call.args[3] for call in chrome.call_args_list]
+        self.assertIn("尚未搜索", statuses)
 
 
 class FormattingTests(unittest.TestCase):

@@ -124,6 +124,10 @@ class ReleaseAssetTests(unittest.TestCase):
             "Ctrl-d",
             "Ctrl-u",
             "Enter",
+            "搜索首问、完整 session ID 和工作目录",
+            "不扫描完整会话内容",
+            "不区分大小写",
+            "`n` / `N`",
         )
         for value in required:
             with self.subTest(value=value):

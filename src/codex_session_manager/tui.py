@@ -109,24 +109,31 @@ class ViewState:
             self.list_offset = self.selected - visible_rows + 1
         self.list_offset = max(0, min(self.list_offset, max(0, count - visible_rows)))
 
-    def handle_key(self, key: int, count: int, max_preview_offset: int) -> str | None:
-        if key in (ord("j"), curses.KEY_DOWN):
+    def handle_key(self, key: int | str, count: int, max_preview_offset: int) -> str | None:
+        code = ord(key) if isinstance(key, str) and len(key) == 1 else key
+        if code in (ord("j"), curses.KEY_DOWN):
             self.move(1, count)
-        elif key in (ord("k"), curses.KEY_UP):
+        elif code in (ord("k"), curses.KEY_UP):
             self.move(-1, count)
-        elif key == ord("g"):
+        elif code == ord("g"):
             self.move(-self.selected, count)
-        elif key == ord("G"):
+        elif code == ord("G"):
             self.move(max(count - 1, 0) - self.selected, count)
-        elif key in (4, curses.KEY_NPAGE):
+        elif code in (4, curses.KEY_NPAGE):
             self.preview_offset = min(max_preview_offset, self.preview_offset + 5)
-        elif key in (21, curses.KEY_PPAGE):
+        elif code in (21, curses.KEY_PPAGE):
             self.preview_offset = max(0, self.preview_offset - 5)
-        elif key == ord("r"):
+        elif code == ord("r"):
             return "reload"
-        elif key in (10, 13, curses.KEY_ENTER):
+        elif code == ord("/"):
+            return "search"
+        elif code == ord("n"):
+            return "next_match"
+        elif code == ord("N"):
+            return "previous_match"
+        elif code in (10, 13, curses.KEY_ENTER):
             return "select" if count else None
-        elif key in (ord("q"), 27):
+        elif code in (ord("q"), 27):
             return "quit"
         return None
 
@@ -306,18 +313,45 @@ def _draw_preview(
     return max_offset
 
 
-def _draw_chrome(stdscr, count: int, palette: Palette, status: str) -> None:
+def _draw_chrome(
+    stdscr,
+    count: int,
+    palette: Palette,
+    status: str,
+    search_prompt: str | None = None,
+) -> None:
     rows, cols = stdscr.getmaxyx()
     _safe_addstr(stdscr, 0, 1, "CODEX SESSIONS", palette.title)
     count_label = f"{count} sessions"
     _safe_addstr(stdscr, 0, max(1, cols - len(count_label) - 2), count_label, palette.muted)
-    footer = status or "j/k 移动  Ctrl-d/u 滚动  g/G 首尾  r 刷新  Enter 打开  q 退出"
-    _safe_addstr(stdscr, rows - 1, 1, footer, palette.time if not status else palette.error)
+    footer = (
+        f"/{search_prompt}"
+        if search_prompt is not None
+        else status
+        or "j/k 移动  / 搜索  n/N 匹配  Ctrl-d/u 滚动  r 刷新  Enter 打开  q 退出"
+    )
+    attr = palette.title if search_prompt is not None else palette.error if status else palette.time
+    _safe_addstr(stdscr, rows - 1, 1, footer, attr)
 
 
 def _draw_message(stdscr, text: str, palette: Palette) -> None:
     rows, cols = stdscr.getmaxyx()
     _safe_addstr(stdscr, rows // 2, max(1, (cols - display_width(text)) // 2), text, palette.title)
+
+
+def _key_code(key: int | str) -> int | str:
+    return ord(key) if isinstance(key, str) and len(key) == 1 else key
+
+
+def _is_backspace(key: int | str) -> bool:
+    return _key_code(key) in (8, 127, curses.KEY_BACKSPACE)
+
+
+def _match_status(search: SearchState, selected: int) -> str:
+    if not search.matches:
+        return f"未找到：{search.query}"
+    position = search.matches.index(selected) + 1
+    return f"匹配 {position}/{len(search.matches)}：{search.query}"
 
 
 def _event_loop(
@@ -335,6 +369,8 @@ def _event_loop(
     palette = _init_palette(use_color)
     sessions = repository.list_sessions()
     state = ViewState()
+    search = SearchState()
+    search_input: str | None = None
     status = ""
 
     while True:
@@ -342,7 +378,7 @@ def _event_loop(
         rows, cols = stdscr.getmaxyx()
         layout = calculate_layout(rows, cols)
         max_preview_offset = 0
-        _draw_chrome(stdscr, len(sessions), palette, status)
+        _draw_chrome(stdscr, len(sessions), palette, status, search_input)
 
         if layout.mode == "small":
             _draw_message(stdscr, "终端尺寸不足，需要至少 60×20", palette)
@@ -364,16 +400,53 @@ def _event_loop(
         stdscr.noutrefresh()
         curses.doupdate()
         status = ""
-        key = stdscr.getch()
+        key = stdscr.get_wch()
+
+        if search_input is not None:
+            code = _key_code(key)
+            if code in (10, 13, curses.KEY_ENTER):
+                query = search_input
+                search_input = None
+                if not query:
+                    status = "搜索已取消"
+                    continue
+                target = search.activate(query, sessions, state.selected)
+                if target is None:
+                    status = f"未找到：{query}"
+                    continue
+                state.move(target - state.selected, len(sessions))
+                status = _match_status(search, state.selected)
+            elif code == 27:
+                search_input = None
+                status = "已取消搜索"
+            elif _is_backspace(key):
+                search_input = search_input[:-1]
+            elif isinstance(key, str) and key.isprintable():
+                search_input += key
+            continue
+
         action = state.handle_key(key, len(sessions), max_preview_offset)
         if action == "quit":
             return None
+        if action == "search":
+            search_input = ""
+            continue
+        if action in ("next_match", "previous_match"):
+            direction = 1 if action == "next_match" else -1
+            target = search.next(state.selected, direction)
+            if target is None:
+                status = "尚未搜索" if not search.query else f"未找到：{search.query}"
+                continue
+            state.move(target - state.selected, len(sessions))
+            status = _match_status(search, state.selected)
+            continue
         if action == "select" and sessions:
             if resume_error:
                 status = resume_error
                 continue
             return sessions[state.selected].id
         if action == "reload":
+            search.clear()
             selected_id = sessions[state.selected].id if sessions else ""
             try:
                 sessions = repository.list_sessions()
