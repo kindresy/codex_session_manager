@@ -278,10 +278,18 @@ class CompatiblePreviewServiceTests(unittest.TestCase):
         self.assertEqual(previews.get(refreshed_session), app_server_preview)
         self.assertEqual(primary_preview.calls, [first_session, refreshed_session])
 
-    def test_preview_degradation_bypasses_repeated_reads_until_refresh(self):
+    def test_degraded_pathless_resolution_is_cached_until_refresh(self):
         state = CompatibilityState()
         primary_repository = ListingService([SESSION])
-        local_repository = ListingService([FALLBACK_SESSION])
+        local_session = Session(
+            SESSION.id,
+            "本地摘要",
+            "/tmp/local-project",
+            3.0,
+            4.0,
+            "/tmp/exact-rollout.jsonl",
+        )
+        local_repository = ListingService([local_session])
         repository = CompatibleSessionRepository(
             primary_repository, local_repository, state
         )
@@ -300,12 +308,21 @@ class CompatiblePreviewServiceTests(unittest.TestCase):
         previews.get(session)
 
         self.assertEqual(primary_preview.calls, [session])
-        self.assertEqual(fallback_preview.calls, [session, session])
+        self.assertEqual(local_repository.calls, 1)
+        self.assertEqual(len(fallback_preview.calls), 2)
+        self.assertTrue(
+            all(
+                item.rollout_path == local_session.rollout_path
+                for item in fallback_preview.calls
+            )
+        )
 
         refreshed_session = repository.list_sessions()[0]
         previews.get(refreshed_session)
 
         self.assertEqual(primary_preview.calls, [session, refreshed_session])
+        self.assertEqual(local_repository.calls, 2)
+        self.assertEqual(len(fallback_preview.calls), 3)
 
     def test_pathless_session_uses_real_local_repository_and_preview_fixture(self):
         with tempfile.TemporaryDirectory() as directory:

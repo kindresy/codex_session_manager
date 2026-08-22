@@ -83,6 +83,9 @@ class CompatiblePreviewService:
         self._cache: dict[
             tuple[int, str, str, str, float, float, str], Preview
         ] = {}
+        self._resolved_local_sessions: dict[
+            tuple[int, str, str, str, float, float, str], Session
+        ] = {}
 
     def get(self, session: Session) -> Preview:
         self._invalidate_after_refresh()
@@ -91,12 +94,16 @@ class CompatiblePreviewService:
         if cached is not None:
             return cached
         if self.state.listing_degraded or self.state.preview_degraded:
-            return self.fallback.get(self._resolve_local_session(session))
+            return self.fallback.get(
+                self._resolve_local_session(session, cache_key)
+            )
         try:
             preview = self.primary.get_preview(session)
         except AppServerError:
             self.state.degrade_preview()
-            return self.fallback.get(self._resolve_local_session(session))
+            return self.fallback.get(
+                self._resolve_local_session(session, cache_key)
+            )
         self._cache[cache_key] = preview
         return preview
 
@@ -104,6 +111,7 @@ class CompatiblePreviewService:
         if self._cache_generation == self.state.generation:
             return
         self._cache.clear()
+        self._resolved_local_sessions.clear()
         self._cache_generation = self.state.generation
 
     @staticmethod
@@ -117,10 +125,20 @@ class CompatiblePreviewService:
             session.rollout_path,
         )
 
-    def _resolve_local_session(self, session: Session) -> Session:
+    def _resolve_local_session(
+        self,
+        session: Session,
+        cache_key: tuple[int, str, str, str, float, float, str],
+    ) -> Session:
         if session.rollout_path:
             return session
+        cached = self._resolved_local_sessions.get(cache_key)
+        if cached is not None:
+            return cached
+        resolved = session
         for local_session in self.fallback_repository.list_sessions():
             if local_session.id == session.id and local_session.rollout_path:
-                return replace(session, rollout_path=local_session.rollout_path)
-        return session
+                resolved = replace(session, rollout_path=local_session.rollout_path)
+                break
+        self._resolved_local_sessions[cache_key] = resolved
+        return resolved
