@@ -35,6 +35,27 @@ def clip_display(text: str, width: int, ellipsis: str = "…") -> str:
     return "".join(result) + ellipsis
 
 
+def clip_display_left(text: str, width: int, ellipsis: str = "…") -> str:
+    """Clip leading cells so the newest suffix remains visible."""
+    if width <= 0:
+        return ""
+    if display_width(text) <= width:
+        return text
+    ellipsis_width = display_width(ellipsis)
+    if width < ellipsis_width:
+        return ""
+    limit = width - ellipsis_width
+    result: list[str] = []
+    used = 0
+    for character in reversed(text):
+        character_width = _cell_width(character)
+        if used + character_width > limit:
+            break
+        result.append(character)
+        used += character_width
+    return ellipsis + "".join(reversed(result))
+
+
 def wrap_display(text: str, width: int) -> list[str]:
     if width <= 0:
         return [""]

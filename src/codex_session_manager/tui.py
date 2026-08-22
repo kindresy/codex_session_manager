@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Protocol
 
 from .models import Preview, Session
-from .text import clip_display, display_width, wrap_display
+from .text import clip_display, clip_display_left, display_width, wrap_display
 
 
 class Repository(Protocol):
@@ -319,18 +319,19 @@ def _draw_chrome(
     palette: Palette,
     status: str,
     search_prompt: str | None = None,
+    status_error: bool = False,
 ) -> None:
     rows, cols = stdscr.getmaxyx()
     _safe_addstr(stdscr, 0, 1, "CODEX SESSIONS", palette.title)
     count_label = f"{count} sessions"
     _safe_addstr(stdscr, 0, max(1, cols - len(count_label) - 2), count_label, palette.muted)
     footer = (
-        f"/{search_prompt}"
+        clip_display_left(f"/{search_prompt}", max(1, cols - 2))
         if search_prompt is not None
         else status
         or "j/k 移动  / 搜索  n/N 匹配  Ctrl-d/u 滚动  r 刷新  Enter 打开  q 退出"
     )
-    attr = palette.title if search_prompt is not None else palette.error if status else palette.time
+    attr = palette.title if search_prompt is not None else palette.error if status_error else palette.time
     _safe_addstr(stdscr, rows - 1, 1, footer, attr)
 
 
@@ -372,13 +373,14 @@ def _event_loop(
     search = SearchState()
     search_input: str | None = None
     status = ""
+    status_error = False
 
     while True:
         stdscr.erase()
         rows, cols = stdscr.getmaxyx()
         layout = calculate_layout(rows, cols)
         max_preview_offset = 0
-        _draw_chrome(stdscr, len(sessions), palette, status, search_input)
+        _draw_chrome(stdscr, len(sessions), palette, status, search_input, status_error)
 
         if layout.mode == "small":
             _draw_message(stdscr, "终端尺寸不足，需要至少 60×20", palette)
@@ -400,6 +402,7 @@ def _event_loop(
         stdscr.noutrefresh()
         curses.doupdate()
         status = ""
+        status_error = False
         key = stdscr.get_wch()
 
         if search_input is not None:
@@ -413,6 +416,7 @@ def _event_loop(
                 target = search.activate(query, sessions, state.selected)
                 if target is None:
                     status = f"未找到：{query}"
+                    status_error = True
                     continue
                 state.move(target - state.selected, len(sessions))
                 status = _match_status(search, state.selected)
@@ -436,6 +440,7 @@ def _event_loop(
             target = search.next(state.selected, direction)
             if target is None:
                 status = "尚未搜索" if not search.query else f"未找到：{search.query}"
+                status_error = bool(search.query)
                 continue
             state.move(target - state.selected, len(sessions))
             status = _match_status(search, state.selected)
@@ -443,6 +448,7 @@ def _event_loop(
         if action == "select" and sessions:
             if resume_error:
                 status = resume_error
+                status_error = True
                 continue
             return sessions[state.selected].id
         if action == "reload":
@@ -459,6 +465,7 @@ def _event_loop(
                 status = f"已刷新：{len(sessions)} 个会话"
             except Exception as error:  # curses must stay usable after an I/O failure
                 status = f"刷新失败：{error}"
+                status_error = True
 
 
 def run_tui(

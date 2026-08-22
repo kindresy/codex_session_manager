@@ -4,10 +4,13 @@ from unittest.mock import patch
 
 from codex_session_manager.models import Preview, Session
 from codex_session_manager.tui import (
+    Palette,
     SearchState,
     ViewState,
+    _draw_chrome,
     _event_loop,
     _init_palette,
+    _is_backspace,
     build_preview_lines,
     calculate_layout,
     find_session_matches,
@@ -174,6 +177,37 @@ class ViewStateTests(unittest.TestCase):
         self.assertIn("找不到 codex", statuses)
 
 
+class ChromeTests(unittest.TestCase):
+    class FakeScreen:
+        def getmaxyx(self):
+            return (24, 20)
+
+    def test_search_prompt_keeps_suffix_and_success_is_not_error(self):
+        palette = Palette(title=11, time=22, muted=33, error=44)
+
+        with patch("codex_session_manager.tui._safe_addstr") as addstr:
+            _draw_chrome(
+                self.FakeScreen(), 3, palette, "", "abcdefghijklmnopqrstuvwxyz", False
+            )
+        footer = addstr.call_args_list[-1].args
+        self.assertTrue(footer[3].startswith("…"))
+        self.assertTrue(footer[3].endswith("z"))
+        self.assertEqual(footer[4], palette.title)
+
+        with patch("codex_session_manager.tui._safe_addstr") as addstr:
+            _draw_chrome(self.FakeScreen(), 3, palette, "匹配 1/2：目标", None, False)
+        self.assertEqual(addstr.call_args_list[-1].args[4], palette.time)
+
+        with patch("codex_session_manager.tui._safe_addstr") as addstr:
+            _draw_chrome(self.FakeScreen(), 3, palette, "未找到：目标", None, True)
+        self.assertEqual(addstr.call_args_list[-1].args[4], palette.error)
+
+    def test_backspace_variants(self):
+        for key in (curses.KEY_BACKSPACE, 8, 127, "\b", "\x7f"):
+            with self.subTest(key=key):
+                self.assertTrue(_is_backspace(key))
+
+
 class SearchEventLoopTests(unittest.TestCase):
     class FakeScreen:
         def __init__(self, keys):
@@ -224,6 +258,7 @@ class SearchEventLoopTests(unittest.TestCase):
             patch("codex_session_manager.tui.curses.doupdate"),
             patch("codex_session_manager.tui._init_palette"),
             patch("codex_session_manager.tui._draw_list"),
+            patch("codex_session_manager.tui._draw_message"),
             patch("codex_session_manager.tui._draw_preview", return_value=0) as preview,
             patch("codex_session_manager.tui._draw_chrome") as chrome,
         ):
@@ -239,6 +274,11 @@ class SearchEventLoopTests(unittest.TestCase):
 
     def test_n_jumps_to_next_match(self):
         selected, _, _, _ = self.run_loop(("/", "目", "标", "\n", "n", "\n"))
+
+        self.assertEqual(selected, "22222222-2222")
+
+    def test_upper_n_jumps_to_previous_match(self):
+        selected, _, _, _ = self.run_loop(("/", "目", "标", "\n", "N", "\n"))
 
         self.assertEqual(selected, "22222222-2222")
 
@@ -272,6 +312,16 @@ class SearchEventLoopTests(unittest.TestCase):
         self.assertEqual(repository.calls, 2)
         statuses = [call.args[3] for call in chrome.call_args_list]
         self.assertIn("尚未搜索", statuses)
+
+    def test_search_with_empty_session_list_is_safe(self):
+        repository = self.Repository([])
+
+        selected, _, preview, chrome = self.run_loop(("/", "目标", "\n", "q"), repository)
+
+        self.assertIsNone(selected)
+        preview.assert_not_called()
+        statuses = [call.args[3] for call in chrome.call_args_list]
+        self.assertIn("未找到：目标", statuses)
 
 
 class FormattingTests(unittest.TestCase):

@@ -2,7 +2,12 @@ import unittest
 from datetime import datetime, timezone
 
 from codex_session_manager.models import Preview, Session, normalize_epoch
-from codex_session_manager.text import clip_display, display_width, wrap_display
+from codex_session_manager.text import (
+    clip_display,
+    clip_display_left,
+    display_width,
+    wrap_display,
+)
 
 
 class ModelAndTextTests(unittest.TestCase):
@@ -38,6 +43,11 @@ class ModelAndTextTests(unittest.TestCase):
     def test_clip_display_preserves_column_width(self):
         self.assertEqual(clip_display("ab中文cd", 7), "ab中文…")
         self.assertEqual(clip_display("short", 8), "short")
+
+    def test_clip_display_left_keeps_newest_suffix(self):
+        self.assertEqual(clip_display_left("abcdef", 4), "…def")
+        self.assertEqual(clip_display_left("你好世界", 5), "…世界")
+        self.assertEqual(clip_display_left("short", 8), "short")
 
     def test_wrap_display_does_not_split_wide_characters(self):
         self.assertEqual(wrap_display("甲乙丙", 4), ["甲乙", "丙"])
