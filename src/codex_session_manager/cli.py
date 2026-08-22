@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from . import __version__
 from .preview import PreviewService
 from .repository import SessionRepository
 from .tui import run_tui
@@ -29,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-color",
         action="store_true",
         help="禁用彩色界面",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     return parser
 

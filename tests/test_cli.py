@@ -9,6 +9,13 @@ from codex_session_manager.cli import main, resume_command
 
 
 class CliTests(unittest.TestCase):
+    def test_version_exits_successfully(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(output.getvalue().strip(), "codex-session 0.1.0")
+
     def test_help_exits_successfully(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:

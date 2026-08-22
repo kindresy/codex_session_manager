@@ -6,11 +6,36 @@ build-backend = "setuptools.build_meta"
 name = "codex-session-manager"
 version = "0.1.0"
 description = "A colorful terminal browser for Codex CLI sessions"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "kindresy" }]
 requires-python = ">=3.10"
 dependencies = []
+keywords = ["codex", "openai", "session", "tui", "cli"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console :: Curses",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/kindresy/codex_session_manager"
+Repository = "https://github.com/kindresy/codex_session_manager"
+Issues = "https://github.com/kindresy/codex_session_manager/issues"
 
 [project.scripts]
 codex-session = "codex_session_manager.cli:main"
+
+[tool.setuptools]
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["src"]
