@@ -10,7 +10,8 @@ class ReleaseAssetTests(unittest.TestCase):
         metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         required = (
             'readme = "README.md"',
-            'license = { file = "LICENSE" }',
+            'license = "MIT"',
+            'license-files = ["LICENSE"]',
             'authors = [{ name = "kindresy" }]',
             'dependencies = []',
             '"Operating System :: MacOS"',
@@ -27,6 +28,7 @@ class ReleaseAssetTests(unittest.TestCase):
         for value in required:
             with self.subTest(value=value):
                 self.assertIn(value, metadata)
+        self.assertNotIn('"License :: OSI Approved :: MIT License"', metadata)
 
     def test_mit_license(self):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
@@ -76,6 +78,40 @@ class ReleaseAssetTests(unittest.TestCase):
             "__pycache__/",
         }
         self.assertEqual(required - set(ignored), set())
+
+    def test_readme_public_usage(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        required = (
+            "Linux",
+            "macOS",
+            "WSL",
+            "原生 Windows",
+            "Python 3.10",
+            "UTF-8",
+            "curses",
+            "https://github.com/kindresy/codex_session_manager.git",
+            "git clone",
+            "python3 -m venv .venv",
+            "python3 -m pip install .",
+            'python3 -m pip install "git+https://github.com/kindresy/codex_session_manager.git"',
+            "PYTHONPATH=src python3 -m codex_session_manager",
+            "python3 -m pip install -e .",
+            "$CODEX_HOME",
+            "--codex-home",
+            "只读",
+            "内部格式",
+            "找不到 codex",
+            "没有找到可恢复",
+            "codex --version",
+            "python3 --version",
+            "codex-session --version",
+            "Ctrl-d",
+            "Ctrl-u",
+            "Enter",
+        )
+        for value in required:
+            with self.subTest(value=value):
+                self.assertIn(value, readme)
 
 
 if __name__ == "__main__":
