@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      - name: Run unit tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+
+      - name: Compile source
+        run: python -m compileall -q src tests
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Install wheel
+        run: python -m pip install --no-deps dist/*.whl
+
+      - name: Smoke-test installed command
+        run: |
+          codex-session --help
+          codex-session --version
