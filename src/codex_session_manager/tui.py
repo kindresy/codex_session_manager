@@ -154,8 +154,15 @@ def _pad_display(text: str, width: int) -> str:
 
 
 def _init_palette(enabled: bool) -> Palette:
+    monochrome = Palette(
+        title=curses.A_BOLD,
+        selected=curses.A_REVERSE | curses.A_BOLD,
+        time=curses.A_BOLD,
+        muted=curses.A_DIM,
+        error=curses.A_BOLD,
+    )
     if not enabled or not curses.has_colors():
-        return Palette()
+        return monochrome
     try:
         curses.start_color()
         curses.use_default_colors()
@@ -174,7 +181,7 @@ def _init_palette(enabled: bool) -> Palette:
             error=curses.color_pair(6) | curses.A_BOLD,
         )
     except curses.error:
-        return Palette()
+        return monochrome
 
 
 def _safe_addstr(window, y: int, x: int, text: str, attr: int = 0) -> None:

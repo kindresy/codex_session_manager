@@ -4,6 +4,7 @@ import unittest
 from codex_session_manager.models import Preview, Session
 from codex_session_manager.tui import (
     ViewState,
+    _init_palette,
     build_preview_lines,
     calculate_layout,
     format_absolute,
@@ -99,6 +100,11 @@ class FormattingTests(unittest.TestCase):
         self.assertIn("第一条问题", text)
         self.assertIn("最近用户消息", text)
         self.assertIn("最近助手回复", text)
+
+    def test_monochrome_palette_keeps_selection_visible(self):
+        palette = _init_palette(False)
+        self.assertNotEqual(palette.selected, 0)
+        self.assertTrue(palette.selected & curses.A_REVERSE)
 
 
 if __name__ == "__main__":
