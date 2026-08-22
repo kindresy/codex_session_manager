@@ -47,6 +47,45 @@ def calculate_layout(rows: int, cols: int) -> Layout:
     )
 
 
+def find_session_matches(sessions: list[Session], query: str) -> tuple[int, ...]:
+    """Return indices whose loaded metadata contains the query."""
+    needle = query.casefold()
+    if not needle:
+        return ()
+    return tuple(
+        index
+        for index, session in enumerate(sessions)
+        if needle in "\n".join((session.id, session.first_question, session.cwd)).casefold()
+    )
+
+
+@dataclass(slots=True)
+class SearchState:
+    query: str = ""
+    matches: tuple[int, ...] = ()
+
+    def activate(self, query: str, sessions: list[Session], selected: int) -> int | None:
+        self.query = query
+        self.matches = find_session_matches(sessions, query)
+        if not self.matches:
+            return None
+        return next((index for index in self.matches if index > selected), self.matches[0])
+
+    def next(self, selected: int, direction: int) -> int | None:
+        if not self.matches:
+            return None
+        if direction >= 0:
+            return next((index for index in self.matches if index > selected), self.matches[0])
+        return next(
+            (index for index in reversed(self.matches) if index < selected),
+            self.matches[-1],
+        )
+
+    def clear(self) -> None:
+        self.query = ""
+        self.matches = ()
+
+
 @dataclass(slots=True)
 class ViewState:
     selected: int = 0

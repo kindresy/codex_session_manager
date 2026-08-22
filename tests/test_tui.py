@@ -4,11 +4,13 @@ from unittest.mock import patch
 
 from codex_session_manager.models import Preview, Session
 from codex_session_manager.tui import (
+    SearchState,
     ViewState,
     _event_loop,
     _init_palette,
     build_preview_lines,
     calculate_layout,
+    find_session_matches,
     format_absolute,
     format_relative,
 )
@@ -30,6 +32,51 @@ class LayoutTests(unittest.TestCase):
         layout = calculate_layout(15, 50)
         self.assertEqual(layout.mode, "small")
         self.assertEqual(layout.list_rect, (0, 0, 0, 0))
+
+
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        self.sessions = [
+            Session("AbCdEf00-0000", "setup Straße", "/tmp/alpha", 1.0, 2.0, "/tmp/0"),
+            Session("11111111-1111", "修复网络问题", "/tmp/beta", 1.0, 2.0, "/tmp/1"),
+            Session("22222222-2222", "其他工作", "/srv/Project-X", 1.0, 2.0, "/tmp/2"),
+            Session("33333333-3333", "再次修复", "/tmp/delta", 1.0, 2.0, "/tmp/3"),
+        ]
+
+    def test_matches_question_full_id_and_directory(self):
+        self.assertEqual(find_session_matches(self.sessions, "修复"), (1, 3))
+        self.assertEqual(find_session_matches(self.sessions, "ABCDEF"), (0,))
+        self.assertEqual(find_session_matches(self.sessions, "project-x"), (2,))
+        self.assertEqual(find_session_matches(self.sessions, "STRASSE"), (0,))
+        self.assertEqual(find_session_matches(self.sessions, ""), ())
+
+    def test_activate_starts_after_selection_and_wraps(self):
+        search = SearchState()
+
+        self.assertEqual(search.activate("修复", self.sessions, 1), 3)
+        self.assertEqual(search.matches, (1, 3))
+        self.assertEqual(search.activate("修复", self.sessions, 3), 1)
+
+    def test_next_and_previous_wrap_from_matches_or_other_rows(self):
+        search = SearchState()
+        search.activate("修复", self.sessions, 0)
+
+        self.assertEqual(search.next(1, 1), 3)
+        self.assertEqual(search.next(3, 1), 1)
+        self.assertEqual(search.next(1, -1), 3)
+        self.assertEqual(search.next(3, -1), 1)
+        self.assertEqual(search.next(2, 1), 3)
+        self.assertEqual(search.next(2, -1), 1)
+
+    def test_no_match_and_clear(self):
+        search = SearchState()
+
+        self.assertIsNone(search.activate("不存在", self.sessions, 2))
+        self.assertEqual(search.query, "不存在")
+        self.assertEqual(search.matches, ())
+        self.assertIsNone(search.next(2, 1))
+        search.clear()
+        self.assertEqual((search.query, search.matches), ("", ()))
 
 
 class ViewStateTests(unittest.TestCase):
