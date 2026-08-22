@@ -323,8 +323,10 @@ class AppServerClientTests(unittest.TestCase):
             client.close()
 
     def test_late_timeout_response_does_not_poison_the_next_request(self):
-        client, _ = self.make_client("late", timeout=0.05)
+        client, _ = self.make_client("late")
         try:
+            client._ensure_started()
+            client.timeout = 0.05
             with self.assertRaisesRegex(AppServerError, "timed out"):
                 client.list_sessions()
             client.timeout = 0.5
