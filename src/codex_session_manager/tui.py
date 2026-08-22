@@ -355,6 +355,12 @@ def _match_status(search: SearchState, selected: int) -> str:
     return f"匹配 {position}/{len(search.matches)}：{search.query}"
 
 
+def _repository_status(repository: Repository, resume_error: str) -> tuple[str, bool]:
+    if resume_error:
+        return resume_error, True
+    return getattr(repository, "warning", ""), False
+
+
 def _event_loop(
     stdscr,
     repository: Repository,
@@ -372,8 +378,7 @@ def _event_loop(
     state = ViewState()
     search = SearchState()
     search_input: str | None = None
-    status = ""
-    status_error = False
+    status, status_error = _repository_status(repository, resume_error)
 
     while True:
         stdscr.erase()
@@ -401,8 +406,7 @@ def _event_loop(
             )
         stdscr.noutrefresh()
         curses.doupdate()
-        status = ""
-        status_error = False
+        status, status_error = _repository_status(repository, resume_error)
         key = stdscr.get_wch()
 
         if search_input is not None:
@@ -462,7 +466,9 @@ def _event_loop(
                 )
                 state.list_offset = 0
                 state.preview_offset = 0
-                status = f"已刷新：{len(sessions)} 个会话"
+                status, status_error = _repository_status(repository, resume_error)
+                if not status:
+                    status = f"已刷新：{len(sessions)} 个会话"
             except Exception as error:  # curses must stay usable after an I/O failure
                 status = f"刷新失败：{error}"
                 status_error = True

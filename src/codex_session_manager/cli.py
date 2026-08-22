@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Sequence
 
 from . import __version__
+from .app_server import AppServerClient
+from .compatibility import CompatiblePreviewService, CompatibleSessionRepository
 from .preview import PreviewService
 from .repository import SessionRepository
 from .tui import run_tui
@@ -56,19 +58,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     codex_path = shutil.which("codex")
     resume_error = "" if codex_path else "在 PATH 中找不到 codex，当前只能浏览会话"
+    codex_home = resolve_codex_home(args.codex_home)
 
-    repository = SessionRepository(resolve_codex_home(args.codex_home))
+    repository = SessionRepository(codex_home)
     previews = PreviewService()
+    app_server: AppServerClient | None = None
     try:
-        tui_options = {"use_color": not args.no_color}
-        if resume_error:
-            tui_options["resume_error"] = resume_error
-        selected_id = run_tui(repository, previews, **tui_options)
-    except KeyboardInterrupt:
-        return 130
-    except (OSError, curses.error) as error:
-        print(f"错误：无法启动终端界面：{error}", file=sys.stderr)
-        return 2
+        if codex_path:
+            app_server = AppServerClient(codex_path, codex_home, __version__)
+            repository = CompatibleSessionRepository(app_server, repository)
+            previews = CompatiblePreviewService(app_server, previews)
+        try:
+            tui_options = {"use_color": not args.no_color}
+            if resume_error:
+                tui_options["resume_error"] = resume_error
+            selected_id = run_tui(repository, previews, **tui_options)
+        except KeyboardInterrupt:
+            return 130
+        except (OSError, curses.error) as error:
+            print(f"错误：无法启动终端界面：{error}", file=sys.stderr)
+            return 2
+    finally:
+        if app_server is not None:
+            app_server.close()
 
     if selected_id is None:
         return 0

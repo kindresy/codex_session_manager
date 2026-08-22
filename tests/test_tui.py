@@ -251,7 +251,7 @@ class SearchEventLoopTests(unittest.TestCase):
             Session("22222222-2222", "另一个目标", "/tmp/gamma", 1.0, 2.0, "/tmp/2"),
         ]
 
-    def run_loop(self, keys, repository=None):
+    def run_loop(self, keys, repository=None, resume_error=""):
         repository = repository or self.Repository(self.sessions)
         with (
             patch("codex_session_manager.tui.curses.curs_set"),
@@ -263,7 +263,7 @@ class SearchEventLoopTests(unittest.TestCase):
             patch("codex_session_manager.tui._draw_chrome") as chrome,
         ):
             selected = _event_loop(
-                self.FakeScreen(keys), repository, self.Previews(), True
+                self.FakeScreen(keys), repository, self.Previews(), True, resume_error
             )
         return selected, repository, preview, chrome
 
@@ -322,6 +322,46 @@ class SearchEventLoopTests(unittest.TestCase):
         preview.assert_not_called()
         statuses = [call.args[3] for call in chrome.call_args_list]
         self.assertIn("未找到：目标", statuses)
+
+    def test_repository_warning_is_displayed_after_initial_load_as_information(self):
+        repository = self.Repository(self.sessions)
+        repository.warning = "已切换到本地兼容模式"
+
+        selected, _, _, chrome = self.run_loop(("q",), repository)
+
+        self.assertIsNone(selected)
+        self.assertEqual(chrome.call_args_list[0].args[3], repository.warning)
+        self.assertFalse(chrome.call_args_list[0].args[5])
+
+    def test_refresh_updates_repository_warning(self):
+        class WarningRepository(self.Repository):
+            def list_sessions(inner_self):
+                sessions = super(WarningRepository, inner_self).list_sessions()
+                inner_self.warning = (
+                    "初始兼容性警告" if inner_self.calls == 1 else "刷新后的兼容性警告"
+                )
+                return sessions
+
+        selected, _, _, chrome = self.run_loop(
+            ("r", "q"), WarningRepository(self.sessions)
+        )
+
+        self.assertIsNone(selected)
+        statuses = [call.args[3] for call in chrome.call_args_list]
+        self.assertEqual(statuses[:2], ["初始兼容性警告", "刷新后的兼容性警告"])
+        self.assertFalse(chrome.call_args_list[1].args[5])
+
+    def test_missing_codex_error_takes_priority_over_repository_warning(self):
+        repository = self.Repository(self.sessions)
+        repository.warning = "已切换到本地兼容模式"
+
+        selected, _, _, chrome = self.run_loop(
+            ("q",), repository, "在 PATH 中找不到 codex"
+        )
+
+        self.assertIsNone(selected)
+        self.assertEqual(chrome.call_args_list[0].args[3], "在 PATH 中找不到 codex")
+        self.assertTrue(chrome.call_args_list[0].args[5])
 
 
 class FormattingTests(unittest.TestCase):
