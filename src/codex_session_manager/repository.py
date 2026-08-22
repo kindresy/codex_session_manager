@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote
@@ -225,7 +225,8 @@ class SessionRepository:
         if match is None:
             return 0.0
         try:
-            return datetime.strptime(match.group(1), "%Y-%m-%dT%H-%M-%S").timestamp()
+            parsed = datetime.strptime(match.group(1), "%Y-%m-%dT%H-%M-%S")
+            return parsed.replace(tzinfo=timezone.utc).timestamp()
         except ValueError:
             return 0.0
 

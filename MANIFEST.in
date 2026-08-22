@@ -1,0 +1,3 @@
+include .gitignore
+include .github/workflows/ci.yml
+recursive-include tests *.py *.sql *.jsonl

@@ -79,6 +79,22 @@ class ReleaseAssetTests(unittest.TestCase):
         }
         self.assertEqual(required - set(ignored), set())
 
+    def test_sdist_manifest_and_distribution_checks(self):
+        manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+        self.assertIn("include .gitignore", manifest)
+        self.assertIn("include .github/workflows/ci.yml", manifest)
+        self.assertIn("recursive-include tests *.py *.sql *.jsonl", manifest)
+
+        verifier = ROOT / "tests" / "verify_distribution.py"
+        self.assertTrue(verifier.is_file())
+        verifier_text = verifier.read_text(encoding="utf-8")
+        self.assertIn("Description-Content-Type: text/markdown", verifier_text)
+        self.assertIn("tests/fixtures/current_schema.sql", verifier_text)
+
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("python tests/verify_distribution.py", workflow)
+        self.assertIn("sdist-test/codex_session_manager-0.1.0", workflow)
+
     def test_readme_public_usage(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         required = (

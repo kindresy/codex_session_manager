@@ -240,7 +240,7 @@ PYTHONPATH=/tmp/codex-session-manager-release-test /tmp/codex-session-manager-re
 PYTHONPATH=/tmp/codex-session-manager-release-test /tmp/codex-session-manager-release-test/bin/codex-session --version
 ```
 
-Inspect the wheel and sdist archives and assert they include README, LICENSE, and all package modules. Run the real read-only local session discovery smoke test. Expected: every command exits 0.
+Inspect the wheel and sdist archives. Assert that the wheel contains LICENSE, all package modules, and the README as its Markdown long description in `METADATA`; assert that the sdist contains README, LICENSE, all package modules, and every file required to run its included tests. Run the tests from the extracted sdist and the real read-only local session discovery smoke test. Expected: every command exits 0.
 
 - [ ] **Step 6: Commit documentation and verify repository state**
 

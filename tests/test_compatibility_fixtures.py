@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from codex_session_manager.models import Session
@@ -40,7 +41,8 @@ class CompatibilityFixtureTests(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0].id, "fixture-fallback")
         self.assertEqual(sessions[0].first_question, "fixture real prompt")
-        self.assertGreater(sessions[0].created_at, 0)
+        expected = datetime(2026, 8, 22, 20, 5, 43, tzinfo=timezone.utc)
+        self.assertEqual(sessions[0].created_at, expected.timestamp())
 
     def test_mixed_context_fixture_has_deterministic_preview(self):
         rollout = copy_rollout_fixture(self.home, "mixed-context.jsonl")

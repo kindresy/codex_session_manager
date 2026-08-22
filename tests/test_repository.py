@@ -2,7 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from codex_session_manager.repository import (
@@ -240,7 +240,9 @@ class RepositoryTests(unittest.TestCase):
 
         session = SessionRepository(self.home)._parse_rollout(path)
 
-        expected = datetime.strptime("2026-08-22T20-05-43", "%Y-%m-%dT%H-%M-%S").timestamp()
+        expected = datetime.strptime(
+            "2026-08-22T20-05-43", "%Y-%m-%dT%H-%M-%S"
+        ).replace(tzinfo=timezone.utc).timestamp()
         self.assertEqual(session.created_at, expected)
 
     def test_clean_user_text_ignores_injected_context(self):
