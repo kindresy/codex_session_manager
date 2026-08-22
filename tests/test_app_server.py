@@ -1,9 +1,11 @@
 import json
 import stat
+import subprocess
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from codex_session_manager.app_server import (
     AppServerClient,
@@ -113,6 +115,31 @@ class AppServerParserTests(unittest.TestCase):
                 with self.assertRaises(AppServerError):
                     parse_preview(value)
 
+    def test_parse_preview_rejects_malformed_user_content_and_keeps_unknown_types(self):
+        def response(content):
+            return {
+                "thread": {
+                    "turns": [
+                        {
+                            "items": [
+                                {"type": "userMessage", "content": content},
+                                {"type": "agentMessage", "text": "回答"},
+                            ]
+                        }
+                    ]
+                }
+            }
+
+        for content in (["not an object"], [{"type": "text", "text": 3}], [{"type": 3}]):
+            with self.subTest(content=content):
+                with self.assertRaises(AppServerError):
+                    parse_preview(response(content))
+
+        preview = parse_preview(
+            response([{"type": "futureInput", "value": {"safe": True}}, text_item("真实问题")])
+        )
+        self.assertEqual(preview.first_question, "真实问题")
+
 
 class AppServerClientTests(unittest.TestCase):
     def setUp(self):
@@ -138,7 +165,7 @@ class AppServerClientTests(unittest.TestCase):
                         stream.write(json.dumps({"message": message, "codex_home": os.environ.get("CODEX_HOME")}) + "\\n")
 
                 def send(message):
-                    print(json.dumps(message), flush=True)
+                    print(json.dumps(message, ensure_ascii=False), flush=True)
 
                 def thread(identifier, preview, recency):
                     return {
@@ -157,7 +184,7 @@ class AppServerClientTests(unittest.TestCase):
                     method = message.get("method")
                     if method == "initialize":
                         send({"method": "thread/started", "params": {"thread": "ignore"}})
-                        send({"jsonrpc": "2.0", "id": message["id"], "result": {"userAgent": "fake"}})
+                        send({"id": message["id"], "result": {"userAgent": "fake"}})
                     elif method == "thread/list":
                         if home.name == "timeout":
                             time.sleep(5)
@@ -169,12 +196,23 @@ class AppServerClientTests(unittest.TestCase):
                             result = {"data": [thread("thread-one", "第一条问题", 1700000100)], "nextCursor": "second"}
                         else:
                             result = {"data": [thread("thread-two", "第二条问题", 1700000200)], "nextCursor": None}
-                        send({"jsonrpc": "2.0", "id": message["id"], "result": result})
+                        if home.name == "bad-envelope":
+                            send({"id": message["id"], "result": result, "error": {"code": -1, "message": "bad"}})
+                        elif home.name == "bad-response-id":
+                            send({"id": str(message["id"]), "result": result})
+                        elif home.name == "missing-response-id":
+                            send({"result": result})
+                        elif home.name == "bad-result":
+                            send({"id": message["id"], "result": []})
+                        elif home.name == "bad-error":
+                            send({"id": message["id"], "error": "bad"})
+                        else:
+                            send({"id": message["id"], "result": result})
                     elif method == "thread/read":
                         if home.name == "error":
-                            send({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32000, "message": "read failed"}})
+                            send({"id": message["id"], "error": {"code": -32000, "message": "read failed"}})
                         else:
-                            send({"jsonrpc": "2.0", "id": message["id"], "result": {"thread": {"turns": [{"items": [
+                            send({"id": message["id"], "result": {"thread": {"turns": [{"items": [
                                 {"type": "userMessage", "content": [{"type": "text", "text": "第一条问题"}]},
                                 {"type": "agentMessage", "text": "最后回答"}
                             ]}]}}})
@@ -231,6 +269,26 @@ class AppServerClientTests(unittest.TestCase):
         self.assertEqual(messages[4]["params"], {"threadId": "thread-two", "includeTurns": True})
         self.assertTrue(all(entry["codex_home"] == str(home) for entry in self.requests(home)))
 
+    def test_utf8_streams_accept_raw_unicode_json(self):
+        calls = []
+        real_popen = subprocess.Popen
+
+        def capture_popen(*args, **kwargs):
+            calls.append(kwargs)
+            return real_popen(*args, **kwargs)
+
+        with patch("codex_session_manager.app_server.subprocess.Popen", side_effect=capture_popen):
+            client, _ = self.make_client()
+            try:
+                sessions = client.list_sessions()
+                preview = client.get_preview(sessions[0])
+            finally:
+                client.close()
+
+        self.assertEqual(sessions[0].first_question, "第二条问题")
+        self.assertEqual(preview.latest_assistant, "最后回答")
+        self.assertEqual(calls[0]["encoding"], "utf-8")
+
     def test_json_rpc_errors_are_app_server_errors(self):
         client, _ = self.make_client("error")
         try:
@@ -239,6 +297,22 @@ class AppServerClientTests(unittest.TestCase):
                 client.get_preview(session)
         finally:
             client.close()
+
+    def test_rejects_malformed_response_envelopes(self):
+        for home_name, expected in (
+            ("bad-envelope", "invalid App Server response envelope"),
+            ("bad-response-id", "invalid App Server response id"),
+            ("missing-response-id", "invalid App Server response id"),
+            ("bad-result", "invalid App Server result"),
+            ("bad-error", "invalid App Server error"),
+        ):
+            with self.subTest(home_name=home_name):
+                client, _ = self.make_client(home_name)
+                try:
+                    with self.assertRaisesRegex(AppServerError, expected):
+                        client.list_sessions()
+                finally:
+                    client.close()
 
     def test_request_timeout_is_an_app_server_error(self):
         client, _ = self.make_client("timeout", timeout=0.05)

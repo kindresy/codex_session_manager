@@ -56,13 +56,14 @@ def _message_texts(turns: Any) -> tuple[list[str], list[str]]:
                     raise AppServerError("invalid user message content")
                 parts: list[str] = []
                 for entry in content:
-                    if not isinstance(entry, dict) or entry.get("type") != "text":
+                    payload = _object(entry, "user message content entry")
+                    item_type = _string(payload.get("type"), "user message content type")
+                    if item_type != "text":
                         continue
-                    text = entry.get("text")
-                    if isinstance(text, str):
-                        cleaned = clean_user_text(text)
-                        if cleaned:
-                            parts.append(cleaned)
+                    text = _string(payload.get("text"), "user message text", allow_empty=True)
+                    cleaned = clean_user_text(text)
+                    if cleaned:
+                        parts.append(cleaned)
                 if parts:
                     users.append("\n\n".join(parts))
             elif payload.get("type") == "agentMessage":
@@ -239,6 +240,7 @@ class AppServerClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
                 bufsize=1,
                 env=environment,
             )
@@ -288,18 +290,30 @@ class AppServerClient:
             if isinstance(response, AppServerError):
                 raise response
             response_id = response.get("id")
-            if isinstance(response_id, int) and response_id in self._timed_out_ids:
+            if type(response_id) is not int:
+                raise AppServerError("invalid App Server response id")
+            if response_id in self._timed_out_ids:
                 self._timed_out_ids.remove(response_id)
                 continue
             if response_id != request_id:
                 raise AppServerError("unexpected App Server response id")
-            if "error" in response:
-                error = response["error"]
-                message = error.get("message") if isinstance(error, dict) else None
-                raise AppServerError(message or "App Server JSON-RPC error")
-            if "result" not in response:
-                raise AppServerError("invalid App Server response")
-            return response["result"]
+            has_result = "result" in response
+            has_error = "error" in response
+            if has_result == has_error:
+                raise AppServerError("invalid App Server response envelope")
+            if has_result:
+                result = response["result"]
+                if not isinstance(result, dict):
+                    raise AppServerError("invalid App Server result")
+                return result
+            error = response["error"]
+            if not isinstance(error, dict):
+                raise AppServerError("invalid App Server error")
+            code = error.get("code")
+            message = error.get("message")
+            if type(code) is not int or not isinstance(message, str):
+                raise AppServerError("invalid App Server error")
+            raise AppServerError(message)
 
     def _write(self, message: dict[str, Any]) -> None:
         process = self._process
