@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from codex_session_manager.repository import (
@@ -117,6 +118,39 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(session.created_at, 1_700_000_000.0)
         self.assertEqual(session.last_opened_at, 1_700_000_100.0)
 
+    def test_sqlite_creation_falls_back_to_session_meta_timestamp(self):
+        rollout = self.home / "sessions/rollout.jsonl"
+        rollout.parent.mkdir()
+        rollout.write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-08-22T12:00:00Z",
+                    "type": "session_meta",
+                    "payload": {"id": "meta-time", "cwd": "/tmp/meta", "source": "cli"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        connection = sqlite3.connect(self.home / "state_5.sqlite")
+        connection.execute(
+            """
+            CREATE TABLE threads (
+                id TEXT, rollout_path TEXT, updated_at INTEGER, source TEXT,
+                cwd TEXT, archived INTEGER, first_user_message TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("meta-time", str(rollout), 1_800_000_000, "cli", "/tmp/meta", 0, "问题"),
+        )
+        connection.commit()
+        connection.close()
+
+        session = SessionRepository(self.home).list_sessions()[0]
+
+        self.assertEqual(session.created_at, parse_timestamp("2026-08-22T12:00:00Z"))
+
     def test_incompatible_database_falls_back_to_rollouts(self):
         connection = sqlite3.connect(self.home / "state_5.sqlite")
         connection.execute("CREATE TABLE unrelated (value TEXT)")
@@ -154,10 +188,74 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(sessions[0].first_question, "真正的问题")
         self.assertEqual(sessions[0].rollout_path, str(rollout))
 
+    def test_jsonl_metadata_scan_stops_after_first_question(self):
+        path = self.home / "sessions/rollout.jsonl"
+        path.parent.mkdir()
+        path.touch()
+        records = [
+            {
+                "timestamp": "2026-08-22T12:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "fast-id", "cwd": "/tmp/fast", "source": "cli"},
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "第一个问题"}],
+                },
+            },
+        ]
+
+        class GuardedRepository(SessionRepository):
+            @staticmethod
+            def _records(_path):
+                yield from records
+                raise AssertionError("metadata scan consumed conversation tail")
+
+        session = GuardedRepository(self.home)._parse_rollout(path)
+
+        self.assertIsNotNone(session)
+        self.assertEqual(session.first_question, "第一个问题")
+
+    def test_jsonl_creation_falls_back_to_rollout_filename(self):
+        path = self.home / "sessions/2026/08/22/rollout-2026-08-22T20-05-43-fallback.jsonl"
+        path.parent.mkdir(parents=True)
+        records = [
+            {
+                "type": "session_meta",
+                "payload": {"id": "filename-time", "cwd": "/tmp/time", "source": "cli"},
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "时间问题"}],
+                },
+            },
+        ]
+        path.write_text("\n".join(json.dumps(item) for item in records), encoding="utf-8")
+
+        session = SessionRepository(self.home)._parse_rollout(path)
+
+        expected = datetime.strptime("2026-08-22T20-05-43", "%Y-%m-%dT%H-%M-%S").timestamp()
+        self.assertEqual(session.created_at, expected)
+
     def test_clean_user_text_ignores_injected_context(self):
         self.assertEqual(clean_user_text("<environment_context>x</environment_context>"), "")
         self.assertEqual(clean_user_text("# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>x</INSTRUCTIONS>"), "")
         self.assertEqual(clean_user_text("  帮我实现功能  "), "帮我实现功能")
+
+    def test_clean_user_text_preserves_prompt_after_injected_context(self):
+        combined = (
+            "# AGENTS.md instructions for /tmp\n\n"
+            "<INSTRUCTIONS>internal rules</INSTRUCTIONS>\n\n"
+            "<environment_context>hidden paths</environment_context>\n\n"
+            "帮我实现真正的功能"
+        )
+        self.assertEqual(clean_user_text(combined), "帮我实现真正的功能")
 
     def test_parse_timestamp_accepts_iso_and_epoch(self):
         self.assertEqual(parse_timestamp("2023-11-14T22:13:20Z"), 1_700_000_000.0)

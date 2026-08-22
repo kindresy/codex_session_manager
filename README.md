@@ -6,7 +6,7 @@
 
 - Linux 或其他提供 Python `curses` 的类 Unix 环境
 - Python 3.10 或更高版本
-- 已安装并能从 `PATH` 找到 `codex`
+- 如需恢复会话，`PATH` 中应能找到 `codex`；缺少时仍可浏览和预览
 
 ## 安装
 

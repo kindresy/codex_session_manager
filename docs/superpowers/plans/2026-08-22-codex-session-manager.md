@@ -344,7 +344,7 @@ git commit -m "feat: add responsive session browser"
 
 - [ ] **Step 1: Write failing CLI tests**
 
-Patch `curses.wrapper`, `shutil.which`, and `os.execvp`. Assert `--help` exits successfully, `--codex-home PATH` overrides the environment, a missing `codex` binary returns a clear nonzero error without starting the TUI, quitting returns zero, and selection calls exactly:
+Patch `curses.wrapper`, `shutil.which`, and `os.execvp`. Assert `--help` exits successfully, `--codex-home PATH` overrides the environment, a missing `codex` binary still opens the browser with a resume error, quitting returns zero, and selection calls exactly:
 
 ```python
 mock_execvp.assert_called_once_with(
@@ -360,7 +360,7 @@ Expected: FAIL because `codex_session_manager.cli` does not exist.
 
 - [ ] **Step 3: Implement argument parsing and process handoff**
 
-Use `argparse` with `--codex-home` and `--no-color`. Resolve the home in the order explicit flag, `CODEX_HOME`, then `~/.codex`. Check `shutil.which("codex")` before entering curses. Construct the repository and preview service, call `curses.wrapper`, and use `os.execvp("codex", ["codex", "resume", selected_id])` only when an ID is returned. Catch initialization failures, print a concise Chinese error to stderr, and return a nonzero status.
+Use `argparse` with `--codex-home` and `--no-color`. Resolve the home in the order explicit flag, `CODEX_HOME`, then `~/.codex`. Check `shutil.which("codex")` before entering curses and pass a transient resume error when unavailable, while retaining browse/preview support. Construct the repository and preview service, call `curses.wrapper`, and use `os.execvp("codex", ["codex", "resume", selected_id])` only when an ID is returned. Catch initialization failures, print a concise Chinese error to stderr, and return a nonzero status.
 
 Add `__main__.py`:
 

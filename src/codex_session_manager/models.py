@@ -41,4 +41,3 @@ class Preview:
     latest_user: str
     latest_assistant: str
     error: str = ""
-

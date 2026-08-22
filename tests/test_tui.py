@@ -1,9 +1,11 @@
 import curses
 import unittest
+from unittest.mock import patch
 
 from codex_session_manager.models import Preview, Session
 from codex_session_manager.tui import (
     ViewState,
+    _event_loop,
     _init_palette,
     build_preview_lines,
     calculate_layout,
@@ -71,6 +73,55 @@ class ViewStateTests(unittest.TestCase):
         state.selected = 1
         state.ensure_visible(visible_rows=5, count=10)
         self.assertEqual(state.list_offset, 1)
+
+    def test_resume_error_keeps_browser_open_after_enter(self):
+        session = Session("12345678-abcd", "问题", "/tmp", 1.0, 2.0, "/tmp/a.jsonl")
+
+        class FakeScreen:
+            def __init__(self):
+                self.keys = iter((10, ord("q")))
+
+            def keypad(self, _enabled):
+                pass
+
+            def getmaxyx(self):
+                return (40, 140)
+
+            def erase(self):
+                pass
+
+            def noutrefresh(self):
+                pass
+
+            def getch(self):
+                return next(self.keys)
+
+            def derwin(self, *_args):
+                return object()
+
+        class Repository:
+            def list_sessions(self):
+                return [session]
+
+        class Previews:
+            def get(self, _session):
+                return Preview("问题", "问题", "回答")
+
+        with (
+            patch("codex_session_manager.tui.curses.curs_set"),
+            patch("codex_session_manager.tui.curses.doupdate"),
+            patch("codex_session_manager.tui._init_palette"),
+            patch("codex_session_manager.tui._draw_list"),
+            patch("codex_session_manager.tui._draw_preview", return_value=0),
+            patch("codex_session_manager.tui._draw_chrome") as chrome,
+        ):
+            selected = _event_loop(
+                FakeScreen(), Repository(), Previews(), True, "找不到 codex"
+            )
+
+        self.assertIsNone(selected)
+        statuses = [call.args[3] for call in chrome.call_args_list]
+        self.assertIn("找不到 codex", statuses)
 
 
 class FormattingTests(unittest.TestCase):

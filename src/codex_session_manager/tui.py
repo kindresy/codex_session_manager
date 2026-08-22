@@ -281,7 +281,13 @@ def _draw_message(stdscr, text: str, palette: Palette) -> None:
     _safe_addstr(stdscr, rows // 2, max(1, (cols - display_width(text)) // 2), text, palette.title)
 
 
-def _event_loop(stdscr, repository: Repository, previews: Previews, use_color: bool) -> str | None:
+def _event_loop(
+    stdscr,
+    repository: Repository,
+    previews: Previews,
+    use_color: bool,
+    resume_error: str = "",
+) -> str | None:
     try:
         curses.curs_set(0)
     except curses.error:
@@ -324,6 +330,9 @@ def _event_loop(stdscr, repository: Repository, previews: Previews, use_color: b
         if action == "quit":
             return None
         if action == "select" and sessions:
+            if resume_error:
+                status = resume_error
+                continue
             return sessions[state.selected].id
         if action == "reload":
             selected_id = sessions[state.selected].id if sessions else ""
@@ -340,5 +349,11 @@ def _event_loop(stdscr, repository: Repository, previews: Previews, use_color: b
                 status = f"刷新失败：{error}"
 
 
-def run_tui(repository: Repository, previews: Previews, *, use_color: bool = True) -> str | None:
-    return curses.wrapper(_event_loop, repository, previews, use_color)
+def run_tui(
+    repository: Repository,
+    previews: Previews,
+    *,
+    use_color: bool = True,
+    resume_error: str = "",
+) -> str | None:
+    return curses.wrapper(_event_loop, repository, previews, use_color, resume_error)

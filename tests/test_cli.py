@@ -37,13 +37,14 @@ class CliTests(unittest.TestCase):
 
     @patch("codex_session_manager.cli.run_tui")
     @patch("codex_session_manager.cli.shutil.which", return_value=None)
-    def test_missing_codex_returns_error_without_starting_tui(self, _which, run_tui):
+    def test_missing_codex_still_allows_browsing(self, _which, run_tui):
+        run_tui.return_value = None
         errors = io.StringIO()
         with contextlib.redirect_stderr(errors):
             result = main([])
-        self.assertEqual(result, 2)
-        self.assertIn("找不到 codex", errors.getvalue())
-        run_tui.assert_not_called()
+        self.assertEqual(result, 0)
+        self.assertEqual(errors.getvalue(), "")
+        self.assertIn("找不到 codex", run_tui.call_args.kwargs["resume_error"])
 
     @patch("codex_session_manager.cli.run_tui", return_value=None)
     @patch("codex_session_manager.cli.shutil.which", return_value="/usr/bin/codex")

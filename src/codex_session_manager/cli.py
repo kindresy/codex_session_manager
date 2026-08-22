@@ -48,14 +48,16 @@ def resume_command(session_id: str) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if shutil.which("codex") is None:
-        print("错误：在 PATH 中找不到 codex，无法恢复会话。", file=sys.stderr)
-        return 2
+    codex_path = shutil.which("codex")
+    resume_error = "" if codex_path else "在 PATH 中找不到 codex，当前只能浏览会话"
 
     repository = SessionRepository(resolve_codex_home(args.codex_home))
     previews = PreviewService()
     try:
-        selected_id = run_tui(repository, previews, use_color=not args.no_color)
+        tui_options = {"use_color": not args.no_color}
+        if resume_error:
+            tui_options["resume_error"] = resume_error
+        selected_id = run_tui(repository, previews, **tui_options)
     except KeyboardInterrupt:
         return 130
     except (OSError, curses.error) as error:
@@ -64,6 +66,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if selected_id is None:
         return 0
+    if not codex_path:
+        print(f"错误：{resume_error}", file=sys.stderr)
+        return 2
     try:
         resume_command(selected_id)
     except OSError as error:

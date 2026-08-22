@@ -17,21 +17,27 @@ class RepositoryError(RuntimeError):
     """Raised when a storage source is present but incompatible."""
 
 
-_CONTEXT_BLOCK = re.compile(
-    r"^<(environment_context|permissions instructions|skills_instructions)>.*"
-    r"</\1>$",
-    re.DOTALL,
+_INJECTED_BLOCKS = (
+    re.compile(
+        r"(?:^|\n)# AGENTS\.md instructions[^\n]*\n+"
+        r"<INSTRUCTIONS>.*?</INSTRUCTIONS>\s*",
+        re.DOTALL,
+    ),
+    re.compile(r"<environment_context\b[^>]*>.*?</environment_context>\s*", re.DOTALL),
+    re.compile(r"<permissions instructions>.*?</permissions instructions>\s*", re.DOTALL),
+    re.compile(r"<skills_instructions>.*?</skills_instructions>\s*", re.DOTALL),
 )
 
 
 def clean_user_text(text: str) -> str:
     """Return genuine prompt text, excluding known injected context blocks."""
-    value = text.strip()
+    value = text
+    for pattern in _INJECTED_BLOCKS:
+        value = pattern.sub("", value)
+    value = re.sub(r"\n{3,}", "\n\n", value).strip()
     if not value:
         return ""
     if value.startswith("# AGENTS.md instructions"):
-        return ""
-    if _CONTEXT_BLOCK.match(value):
         return ""
     return value
 
@@ -123,10 +129,9 @@ class SessionRepository:
             if not question:
                 continue
 
-            created = self._row_timestamp(
+            created = self._creation_timestamp(
                 row,
                 columns,
-                ("created_at_ms", "created_at"),
                 rollout_path,
             )
             recency = self._row_timestamp(
@@ -152,12 +157,11 @@ class SessionRepository:
         return path if path.is_absolute() else self.codex_home / path
 
     @staticmethod
-    def _row_timestamp(
+    def _row_value_timestamp(
         row: sqlite3.Row,
         columns: set[str],
         candidates: Iterable[str],
-        rollout_path: Path,
-    ) -> float:
+    ) -> float | None:
         for name in candidates:
             if name not in columns:
                 continue
@@ -168,9 +172,61 @@ class SessionRepository:
                 return parse_timestamp(value)
             except (TypeError, ValueError, OverflowError):
                 continue
+        return None
+
+    def _creation_timestamp(
+        self,
+        row: sqlite3.Row,
+        columns: set[str],
+        rollout_path: Path,
+    ) -> float:
+        stored = self._row_value_timestamp(
+            row,
+            columns,
+            ("created_at_ms", "created_at"),
+        )
+        if stored is not None:
+            return stored
+        metadata = self._session_meta_timestamp(rollout_path)
+        return metadata or self._filename_timestamp(rollout_path)
+
+    @classmethod
+    def _row_timestamp(
+        cls,
+        row: sqlite3.Row,
+        columns: set[str],
+        candidates: Iterable[str],
+        rollout_path: Path,
+    ) -> float:
+        stored = cls._row_value_timestamp(row, columns, candidates)
+        if stored is not None:
+            return stored
         try:
             return rollout_path.stat().st_mtime
         except OSError:
+            return 0.0
+
+    def _session_meta_timestamp(self, path: Path) -> float:
+        try:
+            for record in self._records(path):
+                if record.get("type") != "session_meta":
+                    continue
+                try:
+                    return parse_timestamp(record.get("timestamp"))
+                except (TypeError, ValueError, OverflowError):
+                    return 0.0
+        except OSError:
+            return 0.0
+        return 0.0
+
+    @staticmethod
+    def _filename_timestamp(path: Path) -> float:
+        match = re.search(r"rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-", path.name)
+        if match is None:
+            return 0.0
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%dT%H-%M-%S").timestamp()
+        except ValueError:
             return 0.0
 
     def _first_question_from_rollout(self, path: Path) -> str:
@@ -206,24 +262,27 @@ class SessionRepository:
         question = ""
         try:
             for record in self._records(path):
-                if not created and record.get("timestamp") is not None:
-                    try:
-                        created = parse_timestamp(record["timestamp"])
-                    except (TypeError, ValueError, OverflowError):
-                        pass
                 if record.get("type") == "session_meta":
                     payload = record.get("payload", {})
                     session_id = str(payload.get("id", ""))
                     cwd = str(payload.get("cwd", ""))
                     source = payload.get("source")
+                    try:
+                        created = parse_timestamp(record.get("timestamp"))
+                    except (TypeError, ValueError, OverflowError):
+                        pass
                 elif not question and record.get("type") == "response_item":
                     texts = message_texts(record.get("payload", {}), "user")
                     if texts:
                         question = "\n\n".join(texts)
+                if session_id and source is not None and question:
+                    break
         except OSError:
             return None
         if source != "cli" or not session_id or not question:
             return None
+        if not created:
+            created = self._filename_timestamp(path)
         try:
             modified = path.stat().st_mtime
         except OSError:
