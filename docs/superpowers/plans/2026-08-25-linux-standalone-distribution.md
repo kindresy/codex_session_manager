@@ -19,7 +19,7 @@
 - Keep the newly installed version and one previous version after a successful upgrade.
 - Existing wheel, source distribution, Git installation, editable installation, and runtime behavior remain supported.
 - Release assets are exactly `codex-session-manager-linux-x86_64.tar.gz`, `codex-session-manager-linux-x86_64.tar.gz.sha256`, and `install.sh`.
-- The build image is `python@sha256:b3061b93c8df9809c3783a4f17bbf2520425ec6b40bd3e5e7538870e21ba7209`, the linux/amd64 manifest for Python 3.10.18 on Debian Bullseye.
+- The build image is `python@sha256:4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923`, the linux/amd64 manifest for Python 3.10.18 on Debian Bullseye with the required buildpack tools already present.
 - Standalone build dependencies are pinned to PyInstaller 6.21.0, altgraph 0.17.5, packaging 26.3, pyinstaller-hooks-contrib 2026.7, and setuptools 65.5.1.
 - No real Codex sessions, credentials, caches, or build-machine private paths may enter release artifacts.
 
@@ -885,10 +885,8 @@ Run:
 docker run --rm --platform linux/amd64 \
   -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
   -v "$PWD:/work" -w /work \
-  python@sha256:b3061b93c8df9809c3783a4f17bbf2520425ec6b40bd3e5e7538870e21ba7209 \
+  python@sha256:4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923 \
   sh -euxc '
-    apt-get update
-    apt-get install -y --no-install-recommends bash binutils curl
     python -m pip install --no-cache-dir -r packaging/requirements-standalone.txt
     scripts/build-standalone.sh
     chown -R "$HOST_UID:$HOST_GID" build dist
@@ -940,7 +938,7 @@ def test_linux_standalone_release_workflow(self):
         "pull_request:",
         "workflow_dispatch:",
         "linux-x86_64-release",
-        "b3061b93c8df9809c3783a4f17bbf2520425ec6b40bd3e5e7538870e21ba7209",
+        "4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923",
         'ubuntu: ["20.04", "22.04", "24.04"]',
         "scripts/build-standalone.sh",
         "scripts/test-standalone.sh",
@@ -992,10 +990,8 @@ jobs:
           docker run --rm --platform linux/amd64 \
             -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             -v "$PWD:/work" -w /work \
-            python@sha256:b3061b93c8df9809c3783a4f17bbf2520425ec6b40bd3e5e7538870e21ba7209 \
+            python@sha256:4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923 \
             sh -euxc '
-              apt-get update
-              apt-get install -y --no-install-recommends bash binutils curl
               python -m pip install --no-cache-dir -r packaging/requirements-standalone.txt
               scripts/build-standalone.sh
               chown -R "$HOST_UID:$HOST_GID" build dist

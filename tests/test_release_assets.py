@@ -86,6 +86,73 @@ class ReleaseAssetTests(unittest.TestCase):
         }
         self.assertEqual(required - set(ignored), set())
 
+    def test_standalone_build_assets(self):
+        requirements = (
+            ROOT / "packaging/requirements-standalone.txt"
+        ).read_text(encoding="utf-8")
+        for pin in (
+            "PyInstaller==6.21.0",
+            "altgraph==0.17.5",
+            "packaging==26.3",
+            "pyinstaller-hooks-contrib==2026.7",
+            "setuptools==65.5.1",
+        ):
+            self.assertIn(pin, requirements)
+        spec = (ROOT / "packaging/codex-session.spec").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("src/codex_session_manager/__main__.py", spec)
+        self.assertIn('name="codex-session"', spec)
+        self.assertIn('name="codex-session-manager"', spec)
+        build = (ROOT / "scripts/build-standalone.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("python -m unittest discover -s tests -v", build)
+        self.assertIn("python -m PyInstaller", build)
+        self.assertIn("tests/verify_standalone.py", build)
+        self.assertIn("sha256sum", build)
+
+    def test_linux_standalone_release_workflow(self):
+        workflow = (
+            ROOT / ".github/workflows/release-linux-x86_64.yml"
+        ).read_text(encoding="utf-8")
+        required = (
+            "pull_request:",
+            "workflow_dispatch:",
+            "linux-x86_64-release",
+            "4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923",
+            'ubuntu: ["20.04", "22.04", "24.04"]',
+            "scripts/build-standalone.sh",
+            "scripts/test-standalone.sh",
+            "actions/upload-artifact@v4",
+            "actions/download-artifact@v4",
+            "contents: write",
+            "concurrency:",
+            "cancel-in-progress: false",
+            "gh release create",
+            "gh release upload",
+            "--clobber",
+            '[ "$draft_state" = true ]',
+            "--draft",
+            "gh release edit",
+        )
+        for value in required:
+            with self.subTest(value=value):
+                self.assertIn(value, workflow)
+        self.assertNotIn("gh release create \"$tag\" dist/release/*", workflow)
+
+        smoke_test = (ROOT / "scripts/test-standalone.sh").read_text(
+            encoding="utf-8"
+        )
+        for value in (
+            "fixture real prompt",
+            "fixture answer",
+            "current question",
+            "找不到 codex",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, smoke_test)
+
     def test_sdist_manifest_and_distribution_checks(self):
         manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
         self.assertIn("include .gitignore", manifest)
@@ -101,6 +168,11 @@ class ReleaseAssetTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("python tests/verify_distribution.py", workflow)
         self.assertIn("sdist-test/codex_session_manager-0.2.0", workflow)
+        self.assertIn(
+            "include .github/workflows/release-linux-x86_64.yml", manifest
+        )
+        self.assertIn("recursive-include packaging *.spec *.txt", manifest)
+        self.assertIn("recursive-include scripts *.sh", manifest)
 
     def test_readme_public_usage(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -140,6 +212,18 @@ class ReleaseAssetTests(unittest.TestCase):
             "自动切换",
             "无需修改源码",
             "升级 codex-session-manager",
+            "codex-session-manager-linux-x86_64.tar.gz",
+            "releases/latest/download/install.sh",
+            "bash install.sh",
+            "--prefix",
+            "--version",
+            "~/.local/bin",
+            '$HOME/.local/bin:$PATH',
+            "无需安装或升级 Python",
+            "升级",
+            "回退",
+            "卸载",
+            "glibc 2.31",
         )
         for value in required:
             with self.subTest(value=value):
