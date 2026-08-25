@@ -42,11 +42,25 @@ class StandaloneVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "executable"):
             verify_archive(self.archive, self.root / "build-root")
 
-    def test_rejects_links_and_special_members(self):
-        link = tarfile.TarInfo("codex-session-manager/escape")
+    def test_accepts_safe_internal_symbolic_link(self):
+        link = tarfile.TarInfo("codex-session-manager/lib/alias.so")
         link.type = tarfile.SYMTYPE
-        link.linkname = "../../outside"
+        link.linkname = "../real.so"
         self.write_archive(extras=((link, None),))
+        verify_archive(self.archive, self.root / "build-root")
+
+    def test_rejects_escaping_symbolic_link(self):
+        link = tarfile.TarInfo("codex-session-manager/lib/escape")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../../../outside"
+        self.write_archive(extras=((link, None),))
+        with self.assertRaisesRegex(AssertionError, "unsafe symbolic link"):
+            verify_archive(self.archive, self.root / "build-root")
+
+    def test_rejects_special_members(self):
+        fifo = tarfile.TarInfo("codex-session-manager/pipe")
+        fifo.type = tarfile.FIFOTYPE
+        self.write_archive(extras=((fifo, None),))
         with self.assertRaisesRegex(AssertionError, "regular files"):
             verify_archive(self.archive, self.root / "build-root")
 

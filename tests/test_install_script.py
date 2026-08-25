@@ -172,6 +172,31 @@ class InstallScriptTests(unittest.TestCase):
         versions = self.prefix / "lib" / "codex-session-manager" / "versions"
         self.assertEqual([item.name for item in versions.iterdir()], ["0.1.0"])
 
+    def test_failed_current_restoration_keeps_new_target_usable(self):
+        create_release(self.assets, "v0.1.0")
+        create_release(self.assets, "v0.2.0")
+        self.assertEqual(self.install("--version", "v0.1.0").returncode, 0)
+
+        result = self.install(
+            "--version",
+            "v0.2.0",
+            extra_environment={
+                "CODEX_SESSION_INSTALLER_TEST_FAIL_PHASE": "after-current",
+                "CODEX_SESSION_INSTALLER_TEST_FAIL_ROLLBACK": "1",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.current_version(), "codex-session 0.2.0")
+        target = (
+            self.prefix
+            / "lib"
+            / "codex-session-manager"
+            / "versions"
+            / "0.2.0"
+        )
+        self.assertTrue(target.is_dir())
+
     def test_missing_prefix_bin_in_path_prints_exact_export(self):
         create_release(self.assets, "v0.1.0")
 

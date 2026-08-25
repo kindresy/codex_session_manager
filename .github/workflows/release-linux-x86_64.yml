@@ -86,7 +86,11 @@ jobs:
           cleanup() {
             status=$?
             if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then
-              gh release delete "$tag" --yes || true
+              draft_state=$(gh release view "$tag" --json isDraft --jq .isDraft \
+                2>/dev/null || printf 'unknown')
+              if [ "$draft_state" = true ]; then
+                gh release delete "$tag" --yes || true
+              fi
             fi
             exit "$status"
           }

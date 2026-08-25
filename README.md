@@ -43,7 +43,7 @@ bash install.sh
 ~/.local/bin/codex-session --version
 ```
 
-默认安装到 `~/.local`。如果 `~/.local/bin` 不在 `PATH` 中，安装器会打印可直接复制的 `export PATH="~/.local/bin:$PATH"` 配置；运行该命令后即可直接使用 `codex-session`。安装到其他用户目录或指定版本：
+默认安装到 `~/.local`。如果 `~/.local/bin` 不在 `PATH` 中，安装器会打印可直接复制的 `export PATH="$HOME/.local/bin:$PATH"` 配置；运行该命令后即可直接使用 `codex-session`。安装到其他用户目录或指定版本：
 
 ```bash
 bash install.sh --prefix /path/to/prefix

@@ -125,6 +125,7 @@ class ReleaseAssetTests(unittest.TestCase):
             "gh release create",
             "gh release upload",
             "--clobber",
+            '[ "$draft_state" = true ]',
             "--draft",
             "gh release edit",
         )
@@ -205,6 +206,7 @@ class ReleaseAssetTests(unittest.TestCase):
             "--prefix",
             "--version",
             "~/.local/bin",
+            '$HOME/.local/bin:$PATH',
             "无需安装或升级 Python",
             "升级",
             "回退",

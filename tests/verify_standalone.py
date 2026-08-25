@@ -44,6 +44,23 @@ def member_contains(archive: tarfile.TarFile, member: tarfile.TarInfo, needle: b
     return False
 
 
+def safe_symbolic_link(member: tarfile.TarInfo) -> bool:
+    target = PurePosixPath(member.linkname)
+    if target.is_absolute():
+        return False
+    resolved = list(PurePosixPath(member.name).parent.parts)
+    for part in target.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if len(resolved) <= 1:
+                return False
+            resolved.pop()
+        else:
+            resolved.append(part)
+    return bool(resolved) and resolved[0] == "codex-session-manager"
+
+
 def verify_archive(path: Path, forbidden_root: Path) -> None:
     with tarfile.open(path, "r:gz") as archive:
         members = archive.getmembers()
@@ -60,9 +77,15 @@ def verify_archive(path: Path, forbidden_root: Path) -> None:
             assert not parsed.is_absolute(), f"absolute archive path: {member.name}"
             assert ".." not in parsed.parts, f"parent traversal: {member.name}"
             assert parsed.parts[0] == "codex-session-manager", member.name
-            assert member.isdir() or member.isfile(), (
-                f"archive members must be directories or regular files: {member.name}"
-            )
+            if member.issym():
+                assert safe_symbolic_link(member), (
+                    f"unsafe symbolic link: {member.name} -> {member.linkname}"
+                )
+            else:
+                assert member.isdir() or member.isfile(), (
+                    "archive members must be directories, regular files, or safe "
+                    f"symbolic links: {member.name}"
+                )
             lowered = tuple(part.casefold() for part in parsed.parts)
             assert not FORBIDDEN_PARTS.intersection(lowered), (
                 f"forbidden cache or session path: {member.name}"

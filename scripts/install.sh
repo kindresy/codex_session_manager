@@ -82,16 +82,30 @@ cleanup() {
     status=$1
     trap - 0 HUP INT TERM
     if [ "$COMMIT_ACTIVE" -eq 1 ]; then
-        if [ "$HAD_CURRENT" -eq 1 ]; then
-            rollback_tmp=$APP_ROOT/.rollback.$$
-            rm -f "$rollback_tmp"
-            ln -s "$OLD_CURRENT_TARGET" "$rollback_tmp" \
-                && mv -Tf "$rollback_tmp" "$CURRENT" || true
-        else
-            rm -f "$CURRENT"
+        ROLLBACK_LINKS_SAFE=0
+        if [ "$HAD_COMMAND" -eq 1 ] \
+            || { rm -f "$COMMAND" && [ ! -e "$COMMAND" ] && [ ! -L "$COMMAND" ]; }; then
+            if [ "$HAD_CURRENT" -eq 1 ]; then
+                rollback_tmp=$APP_ROOT/.rollback.$$
+                rm -f "$rollback_tmp"
+                if [ "${CODEX_SESSION_INSTALLER_TEST_FAIL_ROLLBACK:-}" != 1 ] \
+                    && ln -s "$OLD_CURRENT_TARGET" "$rollback_tmp" \
+                    && mv -Tf "$rollback_tmp" "$CURRENT" \
+                    && [ "$(readlink "$CURRENT")" = "$OLD_CURRENT_TARGET" ]; then
+                    ROLLBACK_LINKS_SAFE=1
+                fi
+                rm -f "$rollback_tmp"
+            elif rm -f "$CURRENT" \
+                && [ ! -e "$CURRENT" ] && [ ! -L "$CURRENT" ]; then
+                ROLLBACK_LINKS_SAFE=1
+            fi
         fi
-        [ "$HAD_COMMAND" -eq 1 ] || rm -f "$COMMAND"
-        [ "$CREATED_TARGET" -eq 0 ] || rm -rf "$TARGET"
+        if [ "$ROLLBACK_LINKS_SAFE" -eq 1 ]; then
+            [ "$CREATED_TARGET" -eq 0 ] || rm -rf "$TARGET"
+        else
+            printf 'Warning: rollback could not safely restore all links; retaining %s\n' \
+                "$TARGET" >&2
+        fi
     fi
     [ -z "$CURRENT_TMP" ] || rm -f "$CURRENT_TMP"
     [ -z "$COMMAND_TMP" ] || rm -f "$COMMAND_TMP"
