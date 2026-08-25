@@ -52,6 +52,12 @@ case "$RELEASE_BASE_URL" in
     file://*) [ "${CODEX_SESSION_INSTALLER_TESTING:-}" = 1 ] || fail "release URL must use HTTPS" ;;
     *) fail "release URL must use HTTPS" ;;
 esac
+case "$LATEST_URL" in
+    https://*) ;;
+    file://*) [ "${CODEX_SESSION_INSTALLER_TESTING:-}" = 1 ] \
+        || fail "latest release URL must use HTTPS" ;;
+    *) fail "latest release URL must use HTTPS" ;;
+esac
 
 TAG=$REQUESTED_TAG
 if [ -z "$TAG" ]; then
@@ -64,7 +70,11 @@ printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
 VERSION=${TAG#v}
 
 DOWNLOAD_DIR=$(mktemp -d) || fail "could not create a temporary directory"
-cleanup() { rm -rf "$DOWNLOAD_DIR"; }
+STAGE=
+cleanup() {
+    [ -z "$STAGE" ] || rm -rf "$STAGE"
+    rm -rf "$DOWNLOAD_DIR"
+}
 trap cleanup EXIT HUP INT TERM
 ARCHIVE=$DOWNLOAD_DIR/$ASSET
 CHECKSUM=$ARCHIVE.sha256
@@ -120,6 +130,7 @@ if [ ! -d "$TARGET" ]; then
         || fail "staged executable version does not match $TAG"
     mv "$STAGED" "$TARGET"
     rmdir "$STAGE"
+    STAGE=
 else
     reported=$("$TARGET/codex-session" --version 2>/dev/null) \
         || fail "installed version $VERSION is damaged"

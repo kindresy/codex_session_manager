@@ -1,4 +1,5 @@
 import hashlib
+import io
 import os
 import subprocess
 import tarfile
@@ -12,15 +13,18 @@ INSTALLER = ROOT / "scripts" / "install.sh"
 ASSET = "codex-session-manager-linux-x86_64.tar.gz"
 
 
-def create_release(root: Path, tag: str) -> Path:
+def create_release(
+    root: Path, tag: str, reported_version: str | None = None
+) -> Path:
     version = tag.removeprefix("v")
+    shown = reported_version or version
     release = root / "releases" / "download" / tag
     bundle = root / f"bundle-{version}" / "codex-session-manager"
     bundle.mkdir(parents=True)
     executable = bundle / "codex-session"
     executable.write_text(
         "#!/bin/sh\n"
-        f"test \"$1\" = --version && echo 'codex-session {version}' && exit 0\n"
+        f"test \"$1\" = --version && echo 'codex-session {shown}' && exit 0\n"
         "test \"$1\" = --help && echo 'synthetic help' && exit 0\n"
         "exit 0\n",
         encoding="utf-8",
@@ -36,6 +40,19 @@ def create_release(root: Path, tag: str) -> Path:
         f"{digest}  {ASSET}\n", encoding="utf-8"
     )
     return release
+
+
+def replace_with_unsafe_archive(release: Path) -> None:
+    archive = release / ASSET
+    with tarfile.open(archive, "w:gz") as output:
+        payload = b"unsafe\n"
+        member = tarfile.TarInfo("../outside")
+        member.size = len(payload)
+        output.addfile(member, io.BytesIO(payload))
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (release / f"{ASSET}.sha256").write_text(
+        f"{digest}  {ASSET}\n", encoding="utf-8"
+    )
 
 
 class InstallScriptTests(unittest.TestCase):
@@ -70,6 +87,12 @@ class InstallScriptTests(unittest.TestCase):
         return subprocess.check_output(
             [str(executable), "--version"], text=True
         ).strip()
+
+    def assert_current_survives(
+        self, failed: subprocess.CompletedProcess[str]
+    ) -> None:
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.current_version(), "codex-session 0.1.0")
 
     def test_installs_explicit_version_without_python_or_sudo(self):
         create_release(self.assets, "v0.1.0")
@@ -110,6 +133,174 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(
             sorted(item.name for item in versions.iterdir()), ["0.2.0", "0.3.0"]
         )
+
+    def test_checksum_failure_preserves_current_installation(self):
+        create_release(self.assets, "v0.1.0")
+        release = create_release(self.assets, "v0.2.0")
+        self.assertEqual(self.install("--version", "v0.1.0").returncode, 0)
+        (release / f"{ASSET}.sha256").write_text(
+            "0" * 64 + f"  {ASSET}\n", encoding="utf-8"
+        )
+
+        result = self.install("--version", "v0.2.0")
+
+        self.assertIn("checksum", result.stderr)
+        self.assert_current_survives(result)
+
+    def test_download_failure_preserves_current_installation(self):
+        create_release(self.assets, "v0.1.0")
+        self.assertEqual(self.install("--version", "v0.1.0").returncode, 0)
+
+        result = self.install("--version", "v9.9.9")
+
+        self.assertIn("download failed", result.stderr)
+        self.assert_current_survives(result)
+
+    def test_version_mismatch_preserves_current_installation(self):
+        create_release(self.assets, "v0.1.0")
+        create_release(self.assets, "v0.2.0", reported_version="9.9.9")
+        self.assertEqual(self.install("--version", "v0.1.0").returncode, 0)
+
+        result = self.install("--version", "v0.2.0")
+
+        self.assertIn("does not match", result.stderr)
+        self.assert_current_survives(result)
+        app_root = self.prefix / "lib" / "codex-session-manager"
+        self.assertEqual(list(app_root.glob(".stage.*")), [])
+
+    def test_unsafe_archive_is_rejected_before_extraction(self):
+        release = create_release(self.assets, "v0.1.0")
+        replace_with_unsafe_archive(release)
+
+        result = self.install("--version", "v0.1.0")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe path", result.stderr)
+        self.assertFalse((self.root / "outside").exists())
+
+    def test_unmanaged_command_is_never_overwritten(self):
+        create_release(self.assets, "v0.1.0")
+        command = self.prefix / "bin" / "codex-session"
+        command.parent.mkdir(parents=True)
+        command.write_text("user-owned\n", encoding="utf-8")
+
+        result = self.install("--version", "v0.1.0")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not managed", result.stderr)
+        self.assertEqual(command.read_text(encoding="utf-8"), "user-owned\n")
+
+    def test_invalid_tag_is_rejected(self):
+        result = self.install("--version", "main")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid release tag", result.stderr)
+
+    def test_latest_release_is_resolved_from_redirect_target(self):
+        create_release(self.assets, "v0.1.0")
+        latest = self.assets / "releases" / "tag" / "v0.1.0"
+        latest.parent.mkdir(parents=True)
+        latest.write_text("latest\n", encoding="utf-8")
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "CODEX_SESSION_RELEASE_BASE_URL":
+                    self.assets.resolve().as_uri() + "/releases/download",
+                "CODEX_SESSION_LATEST_URL": latest.resolve().as_uri(),
+                "CODEX_SESSION_INSTALLER_TESTING": "1",
+            }
+        )
+
+        result = subprocess.run(
+            ["bash", str(INSTALLER), "--prefix", str(self.prefix)],
+            text=True,
+            capture_output=True,
+            env=environment,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.current_version(), "codex-session 0.1.0")
+
+    def test_non_https_latest_url_requires_explicit_test_mode(self):
+        latest = self.assets / "releases" / "tag" / "v0.1.0"
+        latest.parent.mkdir(parents=True)
+        latest.write_text("latest\n", encoding="utf-8")
+        environment = os.environ.copy()
+        environment["CODEX_SESSION_LATEST_URL"] = latest.resolve().as_uri()
+
+        result = subprocess.run(
+            ["bash", str(INSTALLER), "--prefix", str(self.prefix)],
+            text=True,
+            capture_output=True,
+            env=environment,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("latest release URL must use HTTPS", result.stderr)
+
+    def test_unsupported_operating_system_is_rejected(self):
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        uname = fake_bin / "uname"
+        uname.write_text(
+            "#!/bin/sh\n"
+            "test \"$1\" = -s && echo Darwin || echo x86_64\n",
+            encoding="utf-8",
+        )
+        uname.chmod(0o755)
+        environment = os.environ.copy()
+        environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(INSTALLER),
+                "--prefix",
+                str(self.prefix),
+                "--version",
+                "v0.1.0",
+            ],
+            text=True,
+            capture_output=True,
+            env=environment,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("only Linux", result.stderr)
+
+    def test_unsupported_architecture_is_rejected(self):
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        uname = fake_bin / "uname"
+        uname.write_text(
+            "#!/bin/sh\n"
+            "test \"$1\" = -s && echo Linux || echo aarch64\n",
+            encoding="utf-8",
+        )
+        uname.chmod(0o755)
+        environment = os.environ.copy()
+        environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(INSTALLER),
+                "--prefix",
+                str(self.prefix),
+                "--version",
+                "v0.1.0",
+            ],
+            text=True,
+            capture_output=True,
+            env=environment,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("x86_64", result.stderr)
 
 
 if __name__ == "__main__":
