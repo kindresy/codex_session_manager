@@ -1,3 +1,6 @@
 include .gitignore
 include .github/workflows/ci.yml
+include .github/workflows/release-linux-x86_64.yml
+recursive-include packaging *.spec *.txt
+recursive-include scripts *.sh
 recursive-include tests *.py *.sql *.jsonl

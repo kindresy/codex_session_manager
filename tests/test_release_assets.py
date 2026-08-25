@@ -143,6 +143,11 @@ class ReleaseAssetTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("python tests/verify_distribution.py", workflow)
         self.assertIn("sdist-test/codex_session_manager-0.1.0", workflow)
+        self.assertIn(
+            "include .github/workflows/release-linux-x86_64.yml", manifest
+        )
+        self.assertIn("recursive-include packaging *.spec *.txt", manifest)
+        self.assertIn("recursive-include scripts *.sh", manifest)
 
     def test_readme_public_usage(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -177,6 +182,17 @@ class ReleaseAssetTests(unittest.TestCase):
             "不扫描完整会话内容",
             "不区分大小写",
             "`n` / `N`",
+            "codex-session-manager-linux-x86_64.tar.gz",
+            "releases/latest/download/install.sh",
+            "bash install.sh",
+            "--prefix",
+            "--version",
+            "~/.local/bin",
+            "无需安装或升级 Python",
+            "升级",
+            "回退",
+            "卸载",
+            "glibc 2.31",
         )
         for value in required:
             with self.subTest(value=value):

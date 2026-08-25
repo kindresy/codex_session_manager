@@ -24,16 +24,53 @@
 
 ## 环境要求
 
-- Python 3.10 或更高版本
 - 支持 UTF-8 的终端
-- Python `curses` 和 `sqlite3` 标准库
 - 已安装 Codex CLI，并且 `PATH` 中能够找到 `codex`
 
 缺少 `codex` 时仍可浏览和预览会话，但不能通过 Enter 恢复。
 
-## 从 GitHub 直接安装
+独立程序不需要 Python。使用 pip 或直接从源码运行时，需要 Python 3.10 或更高版本，以及 Python `curses` 和 `sqlite3` 标准库。
 
-建议先进入虚拟环境：
+## 推荐安装：Linux/WSL 独立程序
+
+Linux 或 WSL x86_64 用户可以直接安装自包含版本，无需安装或升级 Python、pip、venv 或 setuptools，也不需要 `sudo`。支持 Ubuntu 20.04 或其他 glibc 2.31 及以上的发行版。
+
+```bash
+curl -fsSLO \
+  https://github.com/kindresy/codex_session_manager/releases/latest/download/install.sh
+less install.sh
+bash install.sh
+codex-session --version
+```
+
+默认安装到 `~/.local`。如果 `~/.local/bin` 不在 `PATH` 中，安装器会打印需要添加的配置。安装到其他用户目录或指定版本：
+
+```bash
+bash install.sh --prefix /path/to/prefix
+bash install.sh --version v0.1.0
+```
+
+也可以从 GitHub Release 手动下载 `codex-session-manager-linux-x86_64.tar.gz` 和对应的 `.sha256` 文件，校验并解压后直接运行其中的 `codex-session`。
+
+### 升级、回退和卸载
+
+重新运行 `bash install.sh` 即可升级。安装器保留当前版本和上一个版本；需要回退时，将 `current` 链接指向保留的旧版本：
+
+```bash
+ln -sfn ~/.local/lib/codex-session-manager/versions/0.1.0 \
+  ~/.local/lib/codex-session-manager/current
+```
+
+卸载只删除本工具管理的用户目录和命令链接：
+
+```bash
+rm ~/.local/bin/codex-session
+rm -r ~/.local/lib/codex-session-manager
+```
+
+## 使用 Python/pip 安装
+
+Python 用户和开发者仍可以从 GitHub 直接安装；这种方式要求 Python 3.10 或更高版本。建议先进入虚拟环境：
 
 ```bash
 python3 -m venv .venv
@@ -173,6 +210,8 @@ python3 -m compileall -q src tests
 python3 -m pip install build
 python3 -m build
 ```
+
+发布标签前，还需要在 WSL Ubuntu 20.04 x86_64 中手动下载候选压缩包，运行 `codex-session --version`，并打开一次 TUI 后按 `q` 正常退出。GitHub Actions 中的 Linux 容器测试不能替代这项 WSL 集成检查。
 
 ## 报告问题
 

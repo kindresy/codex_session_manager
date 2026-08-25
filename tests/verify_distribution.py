@@ -21,16 +21,24 @@ PACKAGE_MODULES = {
 
 SDIST_FILES = {
     ".github/workflows/ci.yml",
+    ".github/workflows/release-linux-x86_64.yml",
     ".gitignore",
     "LICENSE",
+    "packaging/codex-session.spec",
+    "packaging/requirements-standalone.txt",
     "README.md",
     "pyproject.toml",
+    "scripts/build-standalone.sh",
+    "scripts/install.sh",
+    "scripts/test-standalone.sh",
     "tests/__init__.py",
     "tests/fixture_loader.py",
     "tests/fixtures/current_schema.sql",
     "tests/fixtures/minimal_schema.sql",
     "tests/fixtures/fallback/rollout-2026-08-22T20-05-43-fixture.jsonl",
     "tests/fixtures/mixed-context.jsonl",
+    "tests/test_install_script.py",
+    "tests/verify_standalone.py",
 }
 
 
