@@ -79,6 +79,32 @@ class ReleaseAssetTests(unittest.TestCase):
         }
         self.assertEqual(required - set(ignored), set())
 
+    def test_standalone_build_assets(self):
+        requirements = (
+            ROOT / "packaging/requirements-standalone.txt"
+        ).read_text(encoding="utf-8")
+        for pin in (
+            "PyInstaller==6.21.0",
+            "altgraph==0.17.5",
+            "packaging==26.3",
+            "pyinstaller-hooks-contrib==2026.7",
+            "setuptools==65.5.1",
+        ):
+            self.assertIn(pin, requirements)
+        spec = (ROOT / "packaging/codex-session.spec").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("src/codex_session_manager/__main__.py", spec)
+        self.assertIn('name="codex-session"', spec)
+        self.assertIn('name="codex-session-manager"', spec)
+        build = (ROOT / "scripts/build-standalone.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("python -m unittest discover -s tests -v", build)
+        self.assertIn("python -m PyInstaller", build)
+        self.assertIn("tests/verify_standalone.py", build)
+        self.assertIn("sha256sum", build)
+
     def test_sdist_manifest_and_distribution_checks(self):
         manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
         self.assertIn("include .gitignore", manifest)
