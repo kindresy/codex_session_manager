@@ -105,6 +105,29 @@ class ReleaseAssetTests(unittest.TestCase):
         self.assertIn("tests/verify_standalone.py", build)
         self.assertIn("sha256sum", build)
 
+    def test_linux_standalone_release_workflow(self):
+        workflow = (
+            ROOT / ".github/workflows/release-linux-x86_64.yml"
+        ).read_text(encoding="utf-8")
+        required = (
+            "pull_request:",
+            "workflow_dispatch:",
+            "linux-x86_64-release",
+            "4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923",
+            'ubuntu: ["20.04", "22.04", "24.04"]',
+            "scripts/build-standalone.sh",
+            "scripts/test-standalone.sh",
+            "actions/upload-artifact@v4",
+            "actions/download-artifact@v4",
+            "contents: write",
+            "gh release create",
+            "--draft",
+            "gh release edit",
+        )
+        for value in required:
+            with self.subTest(value=value):
+                self.assertIn(value, workflow)
+
     def test_sdist_manifest_and_distribution_checks(self):
         manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
         self.assertIn("include .gitignore", manifest)

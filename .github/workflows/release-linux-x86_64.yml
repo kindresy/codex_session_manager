@@ -1,0 +1,98 @@
+name: Linux standalone release
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build in glibc 2.31 container
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -v "$PWD:/work" -w /work \
+            python@sha256:4e96d6c7c610e5b2a46ff8a36cc76a159d57a5b865d580eda29d51afdc1a1923 \
+            sh -euxc '
+              python -m pip install --no-cache-dir -r packaging/requirements-standalone.txt
+              scripts/build-standalone.sh
+              chown -R "$HOST_UID:$HOST_GID" build dist
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-release
+          path: dist/release/
+          if-no-files-found: error
+
+  compatibility:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["20.04", "22.04", "24.04"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64-release
+          path: dist/release
+      - name: Test exact archive on Ubuntu ${{ matrix.ubuntu }}
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/work:ro" -w /work \
+            "ubuntu:${{ matrix.ubuntu }}" \
+            bash -euxc '
+              apt-get update
+              apt-get install -y --no-install-recommends sqlite3 util-linux
+              scripts/test-standalone.sh \
+                dist/release/codex-session-manager-linux-x86_64.tar.gz
+            '
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, compatibility]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64-release
+          path: dist/release
+      - name: Verify tag matches package version
+        run: |
+          package_version=$(PYTHONPATH=src python3 -c \
+            'from codex_session_manager import __version__; print(__version__)')
+          test "$GITHUB_REF_NAME" = "v$package_version"
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag=$GITHUB_REF_NAME
+          created=0
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then
+              gh release delete "$tag" --yes || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          gh release view "$tag" >/dev/null 2>&1 && {
+            echo "release $tag already exists" >&2
+            exit 1
+          }
+          created=1
+          gh release create "$tag" dist/release/* \
+            --verify-tag --draft --generate-notes --title "$tag"
+          gh release edit "$tag" --draft=false
+          created=0
