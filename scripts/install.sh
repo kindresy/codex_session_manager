@@ -71,11 +71,36 @@ VERSION=${TAG#v}
 
 DOWNLOAD_DIR=$(mktemp -d) || fail "could not create a temporary directory"
 STAGE=
+COMMIT_ACTIVE=0
+CREATED_TARGET=0
+HAD_CURRENT=0
+HAD_COMMAND=0
+OLD_CURRENT_TARGET=
+CURRENT_TMP=
+COMMAND_TMP=
 cleanup() {
+    status=$1
+    trap - 0 HUP INT TERM
+    if [ "$COMMIT_ACTIVE" -eq 1 ]; then
+        if [ "$HAD_CURRENT" -eq 1 ]; then
+            rollback_tmp=$APP_ROOT/.rollback.$$
+            rm -f "$rollback_tmp"
+            ln -s "$OLD_CURRENT_TARGET" "$rollback_tmp" \
+                && mv -Tf "$rollback_tmp" "$CURRENT" || true
+        else
+            rm -f "$CURRENT"
+        fi
+        [ "$HAD_COMMAND" -eq 1 ] || rm -f "$COMMAND"
+        [ "$CREATED_TARGET" -eq 0 ] || rm -rf "$TARGET"
+    fi
+    [ -z "$CURRENT_TMP" ] || rm -f "$CURRENT_TMP"
+    [ -z "$COMMAND_TMP" ] || rm -f "$COMMAND_TMP"
     [ -z "$STAGE" ] || rm -rf "$STAGE"
     rm -rf "$DOWNLOAD_DIR"
+    exit "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap 'cleanup $?' 0
+trap 'exit 1' HUP INT TERM
 ARCHIVE=$DOWNLOAD_DIR/$ASSET
 CHECKSUM=$ARCHIVE.sha256
 URL=$RELEASE_BASE_URL/$TAG
@@ -107,6 +132,7 @@ mkdir -p "$VERSIONS" "$PREFIX/bin"
 if [ -e "$COMMAND" ] || [ -L "$COMMAND" ]; then
     [ -L "$COMMAND" ] && [ "$(readlink "$COMMAND")" = "$MANAGED_COMMAND" ] \
         || fail "$COMMAND already exists and is not managed by this installer"
+    HAD_COMMAND=1
 fi
 if [ -e "$CURRENT" ] && [ ! -L "$CURRENT" ]; then
     fail "$CURRENT exists and is not a symbolic link"
@@ -114,7 +140,9 @@ fi
 
 PREVIOUS=
 if [ -L "$CURRENT" ]; then
-    PREVIOUS=$(readlink "$CURRENT")
+    HAD_CURRENT=1
+    OLD_CURRENT_TARGET=$(readlink "$CURRENT")
+    PREVIOUS=$OLD_CURRENT_TARGET
     PREVIOUS=${PREVIOUS##*/}
 fi
 
@@ -129,6 +157,7 @@ if [ ! -d "$TARGET" ]; then
     [ "$reported" = "codex-session $VERSION" ] \
         || fail "staged executable version does not match $TAG"
     mv "$STAGED" "$TARGET"
+    CREATED_TARGET=1
     rmdir "$STAGE"
     STAGE=
 else
@@ -142,21 +171,32 @@ CURRENT_TMP=$APP_ROOT/.current.$$
 COMMAND_TMP=$PREFIX/bin/.codex-session.$$
 rm -f "$CURRENT_TMP" "$COMMAND_TMP"
 ln -s "versions/$VERSION" "$CURRENT_TMP"
-ln -s "$MANAGED_COMMAND" "$COMMAND_TMP"
+if [ "$HAD_COMMAND" -eq 0 ]; then
+    ln -s "$MANAGED_COMMAND" "$COMMAND_TMP"
+fi
+COMMIT_ACTIVE=1
 mv -Tf "$CURRENT_TMP" "$CURRENT"
-mv -Tf "$COMMAND_TMP" "$COMMAND"
+if [ "${CODEX_SESSION_INSTALLER_TESTING:-}" = 1 ] \
+    && [ "${CODEX_SESSION_INSTALLER_TEST_FAIL_PHASE:-}" = after-current ]; then
+    fail "injected failure after current switch"
+fi
+if [ "$HAD_COMMAND" -eq 0 ]; then
+    mv -Tf "$COMMAND_TMP" "$COMMAND"
+fi
+
+"$COMMAND" --version >/dev/null || fail "installed command smoke test failed"
 
 for directory in "$VERSIONS"/*; do
     [ -d "$directory" ] || continue
     name=${directory##*/}
     [ "$name" = "$VERSION" ] && continue
     [ -n "$PREVIOUS" ] && [ "$name" = "$PREVIOUS" ] && continue
-    rm -rf "$directory"
+    rm -rf "$directory" || printf 'Warning: could not remove old version %s\n' "$name" >&2
 done
+COMMIT_ACTIVE=0
 
-"$COMMAND" --version >/dev/null || fail "installed command smoke test failed"
 printf 'Installed codex-session %s at %s\n' "$VERSION" "$COMMAND"
 case :$PATH: in
     *:$PREFIX/bin:*) ;;
-    *) printf 'Add %s/bin to PATH to run codex-session directly.\n' "$PREFIX" ;;
+    *) printf 'Add it for this shell with:\n  export PATH="%s/bin:$PATH"\n' "$PREFIX" ;;
 esac

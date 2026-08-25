@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: linux-standalone-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -87,12 +91,20 @@ jobs:
             exit "$status"
           }
           trap cleanup EXIT
-          gh release view "$tag" >/dev/null 2>&1 && {
-            echo "release $tag already exists" >&2
-            exit 1
-          }
-          created=1
-          gh release create "$tag" dist/release/* \
-            --verify-tag --draft --generate-notes --title "$tag"
+          state=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null \
+            || printf 'missing')
+          if [ "$state" = false ]; then
+            echo "release $tag is already published; refusing to replace it"
+            exit 0
+          fi
+          if [ "$state" = missing ]; then
+            gh release create "$tag" \
+              --verify-tag --draft --generate-notes --title "$tag"
+            created=1
+          fi
+          gh release upload "$tag" \
+            dist/release/codex-session-manager-linux-x86_64.tar.gz \
+            dist/release/codex-session-manager-linux-x86_64.tar.gz.sha256 \
+            dist/release/install.sh --clobber
           gh release edit "$tag" --draft=false
           created=0

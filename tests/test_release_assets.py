@@ -120,13 +120,30 @@ class ReleaseAssetTests(unittest.TestCase):
             "actions/upload-artifact@v4",
             "actions/download-artifact@v4",
             "contents: write",
+            "concurrency:",
+            "cancel-in-progress: false",
             "gh release create",
+            "gh release upload",
+            "--clobber",
             "--draft",
             "gh release edit",
         )
         for value in required:
             with self.subTest(value=value):
                 self.assertIn(value, workflow)
+        self.assertNotIn("gh release create \"$tag\" dist/release/*", workflow)
+
+        smoke_test = (ROOT / "scripts/test-standalone.sh").read_text(
+            encoding="utf-8"
+        )
+        for value in (
+            "fixture real prompt",
+            "fixture answer",
+            "current question",
+            "找不到 codex",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, smoke_test)
 
     def test_sdist_manifest_and_distribution_checks(self):
         manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")

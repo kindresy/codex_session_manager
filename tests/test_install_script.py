@@ -55,6 +55,15 @@ def replace_with_unsafe_archive(release: Path) -> None:
     )
 
 
+def replace_with_malformed_archive(release: Path) -> None:
+    archive = release / ASSET
+    archive.write_bytes(b"not a tar archive\n")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (release / f"{ASSET}.sha256").write_text(
+        f"{digest}  {ASSET}\n", encoding="utf-8"
+    )
+
+
 class InstallScriptTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -65,7 +74,12 @@ class InstallScriptTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def install(self, *arguments: str, assets: Path | None = None):
+    def install(
+        self,
+        *arguments: str,
+        assets: Path | None = None,
+        extra_environment: dict[str, str] | None = None,
+    ):
         base = (assets or self.assets).resolve().as_uri()
         environment = os.environ.copy()
         environment.update(
@@ -74,6 +88,7 @@ class InstallScriptTests(unittest.TestCase):
                 "CODEX_SESSION_INSTALLER_TESTING": "1",
             }
         )
+        environment.update(extra_environment or {})
         return subprocess.run(
             ["bash", str(INSTALLER), "--prefix", str(self.prefix), *arguments],
             text=True,
@@ -134,6 +149,39 @@ class InstallScriptTests(unittest.TestCase):
             sorted(item.name for item in versions.iterdir()), ["0.2.0", "0.3.0"]
         )
 
+    def test_failure_after_current_switch_rolls_back_everything(self):
+        create_release(self.assets, "v0.1.0")
+        create_release(self.assets, "v0.2.0")
+        self.assertEqual(self.install("--version", "v0.1.0").returncode, 0)
+        current = self.prefix / "lib" / "codex-session-manager" / "current"
+        command = self.prefix / "bin" / "codex-session"
+        old_current = os.readlink(current)
+        old_command = os.readlink(command)
+
+        result = self.install(
+            "--version",
+            "v0.2.0",
+            extra_environment={
+                "CODEX_SESSION_INSTALLER_TEST_FAIL_PHASE": "after-current"
+            },
+        )
+
+        self.assert_current_survives(result)
+        self.assertEqual(os.readlink(current), old_current)
+        self.assertEqual(os.readlink(command), old_command)
+        versions = self.prefix / "lib" / "codex-session-manager" / "versions"
+        self.assertEqual([item.name for item in versions.iterdir()], ["0.1.0"])
+
+    def test_missing_prefix_bin_in_path_prints_exact_export(self):
+        create_release(self.assets, "v0.1.0")
+
+        result = self.install("--version", "v0.1.0")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            f'export PATH="{self.prefix}/bin:$PATH"', result.stdout
+        )
+
     def test_checksum_failure_preserves_current_installation(self):
         create_release(self.assets, "v0.1.0")
         release = create_release(self.assets, "v0.2.0")
@@ -177,6 +225,18 @@ class InstallScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unsafe path", result.stderr)
         self.assertFalse((self.root / "outside").exists())
+
+    def test_malformed_archive_with_valid_checksum_is_rejected(self):
+        release = create_release(self.assets, "v0.1.0")
+        replace_with_malformed_archive(release)
+
+        result = self.install("--version", "v0.1.0")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("archive is invalid", result.stderr)
+        self.assertFalse(
+            (self.prefix / "lib" / "codex-session-manager" / "current").exists()
+        )
 
     def test_unmanaged_command_is_never_overwritten(self):
         create_release(self.assets, "v0.1.0")
