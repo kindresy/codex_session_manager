@@ -11,7 +11,9 @@ from pathlib import Path
 PACKAGE_MODULES = {
     "codex_session_manager/__init__.py",
     "codex_session_manager/__main__.py",
+    "codex_session_manager/app_server.py",
     "codex_session_manager/cli.py",
+    "codex_session_manager/compatibility.py",
     "codex_session_manager/models.py",
     "codex_session_manager/preview.py",
     "codex_session_manager/repository.py",

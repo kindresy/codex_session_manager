@@ -8,7 +8,7 @@
 
 - 显示会话 ID、第一条问题、建立时间、最近打开时间和工作目录。
 - 宽终端使用左表右预览布局，窄终端自动切换为上下布局。
-- 优先从 SQLite 快速读取元数据，格式不兼容时自动降级到 JSONL。
+- 优先通过 Codex App Server 读取会话元数据和预览；App Server 不可用时自动切换到本地 SQLite/JSONL 兼容模式。
 - 仅在选中会话时读取预览，并按文件修改时间缓存。
 - 支持彩色和单色终端。
 - 对 Codex 数据保持只读。
@@ -112,7 +112,15 @@ codex-session --no-color
 
 ## 数据兼容与隐私
 
-Codex 的 session 数据库属于内部格式，未来版本可能发生变化。工具会动态检查 `state_*.sqlite` 的字段；数据库不可用或不兼容时，自动降级扫描 `sessions/**/*.jsonl`。
+Codex 的本地 session 数据属于内部格式，未来版本可能发生变化。会话读取按以下层级工作：首先使用 Codex App Server；若 App Server 启动、通信或响应格式不兼容，工具会自动切换到本地 SQLite/JSONL 兼容模式。本地模式会动态检查 `state_*.sqlite` 的字段，数据库不可用或不兼容时再扫描 `sessions/**/*.jsonl`。成功返回空的 App Server 会话列表时不会切换到本地模式。
+
+切换到本地模式后，界面会显示非致命的降级提示；如果 App Server 不可用且本地会话也不可读，提示会建议升级 codex-session-manager。如果未来不兼容的 Codex 发布导致此情况，请更新软件包，无需修改源码：
+
+```bash
+python3 -m pip install --upgrade codex-session-manager
+```
+
+`$CODEX_HOME`（或 `--codex-home` 指定的目录）会传递给 Codex App Server，并同样用于本地兼容模式，因此两种读取方式查看的是同一份 Codex 数据。
 
 本工具对 Codex 数据完全只读，不会修改数据库、session JSONL、索引、认证信息或配置文件。仓库中的自动测试只使用合成 fixture，不包含真实对话或凭据。
 
