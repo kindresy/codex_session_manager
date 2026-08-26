@@ -127,6 +127,8 @@ def _file_changes(item: dict[str, Any]) -> list[dict[str, Any]] | None:
         path = change.get("path")
         kind = change.get("kind")
         diff = change.get("diff")
+        if isinstance(kind, dict):
+            kind = kind.get("type")
         if not isinstance(path, str) or not isinstance(kind, str) or not isinstance(diff, str):
             raise ValueError("invalid file change")
         result.append({"type": "file_change", "path": path, "kind": kind, "diff": diff})

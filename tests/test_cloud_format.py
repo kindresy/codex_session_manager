@@ -52,7 +52,10 @@ class CloudFormatTests(unittest.TestCase):
                                     "changes": [
                                         {
                                             "path": "src/example.py",
-                                            "kind": "update",
+                                            "kind": {
+                                                "type": "update",
+                                                "move_path": None,
+                                            },
                                             "diff": "- old\n+ new",
                                         }
                                     ],
