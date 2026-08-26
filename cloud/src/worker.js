@@ -87,8 +87,9 @@ async function readStored(object, validate) {
   let payload;
   try {
     payload = await object.json();
-  } catch {
-    throw new StoredDataError("invalid_data");
+  } catch (caught) {
+    if (caught instanceof SyntaxError) throw new StoredDataError("invalid_data");
+    throw caught;
   }
   if (!objectValue(payload)) throw new StoredDataError("invalid_data");
   if (payload.schema_version !== 1) {
@@ -126,12 +127,14 @@ function sessionId(pathname) {
 }
 
 function validId(id) {
-  return (
-    typeof id === "string" &&
-    id.length > 0 &&
-    encoder.encode(id).length <= 750 &&
-    !/[\u0000-\u001F\u007F]/.test(id)
-  );
+  if (typeof id !== "string" || id.length === 0 || encoder.encode(id).length > 750 || /\p{Cc}/u.test(id)) {
+    return false;
+  }
+  for (const character of id) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) return false;
+  }
+  return true;
 }
 
 function validSession(payload, id) {
@@ -153,7 +156,21 @@ function validTurn(turn) {
 }
 
 function validItem(item) {
-  return objectValue(item) && typeof item.type === "string";
+  if (!objectValue(item) || typeof item.type !== "string") return false;
+  if (item.type === "user" || item.type === "assistant") return typeof item.text === "string";
+  if (item.type === "command") {
+    return (
+      typeof item.command === "string" &&
+      typeof item.cwd === "string" &&
+      typeof item.status === "string" &&
+      typeof item.output === "string" &&
+      (item.exit_code === null || Number.isInteger(item.exit_code))
+    );
+  }
+  if (item.type === "file_change") {
+    return typeof item.path === "string" && typeof item.kind === "string" && typeof item.diff === "string";
+  }
+  return true;
 }
 
 function objectValue(value) {

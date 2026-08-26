@@ -24,7 +24,10 @@ class FakeR2 {
     return value === undefined
       ? null
       : {
-          json: async () => JSON.parse(value),
+          json: async () => {
+            if (this.fail.has("json")) throw new Error("R2 body read failed");
+            return JSON.parse(value);
+          },
           text: async () => value,
         };
   }
@@ -159,6 +162,7 @@ test("session IDs must be a non-empty, well-encoded single path segment", async 
     "/api/sessions/%00",
     "/api/sessions/%1F",
     "/api/sessions/%7F",
+    "/api/sessions/%C2%85",
     `/api/sessions/${"a".repeat(751)}`,
   ]) {
     const response = await request(environment(), path);
@@ -185,6 +189,14 @@ test("byte-distinct Unicode IDs use distinct ASCII R2 keys", async () => {
   assert.deepEqual(keys, ids.map(sessionKey));
   assert.notEqual(keys[0], keys[1]);
   assert.ok(keys.every((key) => /^[\x20-\x7E]+$/.test(key)));
+
+  const astral = "astral-\u{1F680}";
+  const response = await request(env, `/api/sessions/${encodeURIComponent(astral)}`, {
+    method: "PUT",
+    json: session(astral),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(env.SESSIONS.values.get(sessionKey(astral))), session(astral));
 });
 
 test("session uploads validate schema, path identity, and metadata types", async (t) => {
@@ -227,6 +239,40 @@ test("session uploads validate schema, path identity, and metadata types", async
   assert.equal(accepted.status, 200);
 });
 
+test("known item types require their normalized fields", async () => {
+  const invalidItems = [
+    { type: "user" },
+    { type: "assistant", text: 3 },
+    { type: "command", cwd: "/p", status: "done", output: "", exit_code: null },
+    { type: "command", command: "ls", cwd: 3, status: "done", output: "", exit_code: null },
+    { type: "command", command: "ls", cwd: "/p", output: "", exit_code: null },
+    { type: "command", command: "ls", cwd: "/p", status: "done", output: null, exit_code: null },
+    { type: "command", command: "ls", cwd: "/p", status: "done", output: "", exit_code: 1.5 },
+    { type: "file_change", kind: "update", diff: "patch" },
+    { type: "file_change", path: "a", kind: 3, diff: "patch" },
+    { type: "file_change", path: "a", kind: "update" },
+  ];
+  for (const item of invalidItems) {
+    const payload = { ...session(), turns: [{ items: [item] }] };
+    const response = await request(environment(), "/api/sessions/session", { method: "PUT", json: payload });
+    assert.equal(response.status, 400, JSON.stringify(item));
+    assert.deepEqual(await body(response), { error: "invalid_payload" });
+  }
+
+  const validItems = [
+    { type: "user", text: "question" },
+    { type: "assistant", text: "answer" },
+    { type: "command", command: "ls", cwd: "/p", status: "done", output: "", exit_code: null },
+    { type: "command", command: "false", cwd: "/p", status: "failed", output: "", exit_code: 1 },
+    { type: "file_change", path: "a", kind: "update", diff: "patch" },
+  ];
+  const response = await request(environment(), "/api/sessions/session", {
+    method: "PUT",
+    json: { ...session(), turns: [{ items: validItems }] },
+  });
+  assert.equal(response.status, 200);
+});
+
 test("index uploads require schema 1 and list fields", async () => {
   const env = environment();
   const valid = {
@@ -251,6 +297,7 @@ test("index uploads require schema 1 and list fields", async () => {
     ],
     [{ ...valid, sessions: [{ ...valid.sessions[0], cwd: undefined }] }, "invalid_payload"],
     [{ ...valid, sessions: [{ ...valid.sessions[0], id: "bad\u0000id" }] }, "invalid_payload"],
+    [{ ...valid, deleted_ids: ["bad\uD800id"] }, "invalid_payload"],
     [{ ...valid, sessions: [valid.sessions[0], valid.sessions[0]] }, "invalid_payload"],
     [{ ...valid, deleted_ids: ["gone", "gone"] }, "invalid_payload"],
     [{ ...valid, deleted_ids: ["session"] }, "invalid_payload"],
@@ -284,6 +331,12 @@ test("stored sessions are revalidated without reporting data errors as R2 failur
   const response = await request(malformed, "/api/sessions/session");
   assert.equal(response.status, 400);
   assert.deepEqual(await body(response), { error: "invalid_data" });
+
+  const readFailure = environment({ [sessionKey("session")]: session() });
+  readFailure.SESSIONS.fail.add("json");
+  const failed = await request(readFailure, "/api/sessions/session");
+  assert.equal(failed.status, 500);
+  assert.deepEqual(await body(failed), { error: "storage_failure" });
 });
 
 test("stored indexes are revalidated without reporting data errors as R2 failures", async () => {
