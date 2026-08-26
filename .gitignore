@@ -1,4 +1,6 @@
 .superpowers/
+cloud/.dev.vars
+cloud/.wrangler/
 __pycache__/
 .worktrees/
 *.py[cod]
