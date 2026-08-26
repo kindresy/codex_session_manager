@@ -1,0 +1,8 @@
+{
+  "name": "codex-session-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
