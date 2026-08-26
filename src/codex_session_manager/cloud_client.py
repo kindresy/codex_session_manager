@@ -10,7 +10,7 @@ import tempfile
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class CloudError(RuntimeError):
@@ -33,7 +33,7 @@ def load_config(path: str | Path) -> SyncConfig:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise CloudError("Cloud sync is not configured; run codex-session sync setup.") from error
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise CloudError("Cloud sync configuration is invalid.") from error
     return _config_from_value(value)
 
@@ -41,9 +41,9 @@ def load_config(path: str | Path) -> SyncConfig:
 def save_config(path: str | Path, config: SyncConfig) -> None:
     path = Path(path)
     _config_from_value({"worker_url": config.worker_url, "token": config.token})
-    path.parent.mkdir(parents=True, exist_ok=True)
     temporary_name: str | None = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
         ) as temporary:
@@ -52,9 +52,12 @@ def save_config(path: str | Path, config: SyncConfig) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary_name, path)
-    except OSError as error:
+    except (OSError, UnicodeError) as error:
         if temporary_name:
-            Path(temporary_name).unlink(missing_ok=True)
+            try:
+                Path(temporary_name).unlink(missing_ok=True)
+            except OSError:
+                pass
         raise CloudError("Could not save cloud sync configuration.") from error
 
 
@@ -62,7 +65,7 @@ class CloudClient:
     def __init__(self, config: SyncConfig):
         config = _config_from_value({"worker_url": config.worker_url, "token": config.token})
         parsed = urlparse(config.worker_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or "?" in config.worker_url or "#" in config.worker_url:
             raise CloudError("Cloud worker URL is invalid.")
         self._worker_url = config.worker_url.rstrip("/")
         self._token = config.token
@@ -85,7 +88,7 @@ class CloudClient:
         return self._versioned(self._request("PUT", "/api/index", payload))
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
-        return self._request("DELETE", self._session_path(session_id))
+        return self._versioned(self._request("DELETE", self._session_path(session_id)))
 
     def health(self) -> dict[str, Any]:
         return self._request("GET", "/health")
@@ -102,7 +105,7 @@ class CloudClient:
             headers["Content-Type"] = "application/json; charset=utf-8"
         request = Request(self._worker_url + path, data=data, headers=headers, method=method)
         try:
-            with urlopen(request) as response:
+            with build_opener(_NoRedirect()).open(request) as response:
                 return _decode_json(response.read())
         except HTTPError as error:
             if error.code == 401:
@@ -121,6 +124,11 @@ class CloudClient:
             raise CloudError("Cloud service returned invalid JSON.")
         if payload.get("schema_version") != 1:
             raise CloudError("Cloud data uses an unsupported schema; upgrade Codex Session Manager.")
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
 
 
 def _config_from_value(value: Any) -> SyncConfig:

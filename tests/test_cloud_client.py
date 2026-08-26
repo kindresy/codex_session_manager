@@ -4,6 +4,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 from codex_session_manager.cloud_client import (
     CloudClient,
@@ -18,6 +19,7 @@ from codex_session_manager.cloud_client import (
 class _Handler(BaseHTTPRequestHandler):
     requests = []
     responses = {}
+    locations = {}
 
     def do_GET(self):
         self._respond()
@@ -34,6 +36,9 @@ class _Handler(BaseHTTPRequestHandler):
         status, payload = type(self).responses.get((self.command, self.path), (404, {"code": "missing"}))
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        location = type(self).locations.get((self.command, self.path))
+        if location:
+            self.send_header("Location", location)
         self.end_headers()
         if isinstance(payload, bytes):
             self.wfile.write(payload)
@@ -48,6 +53,7 @@ class CloudClientTests(unittest.TestCase):
     def setUp(self):
         _Handler.requests = []
         _Handler.responses = {}
+        _Handler.locations = {}
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.start()
@@ -118,6 +124,53 @@ class CloudClientTests(unittest.TestCase):
             self.client.put_index({"schema_version": 2, "sessions": []})
         self.assertEqual(_Handler.requests, [])
 
+    def test_rejects_redirect_without_sending_token_to_redirect_target(self):
+        redirected_requests = []
+
+        class RedirectTargetHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                redirected_requests.append(dict(self.headers))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b'{"schema_version": 1, "sessions": []}')
+
+            def log_message(self, format, *args):
+                pass
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), RedirectTargetHandler)
+        target_thread = threading.Thread(target=target.serve_forever)
+        target_thread.start()
+        self.addCleanup(target.server_close)
+        self.addCleanup(target_thread.join)
+        self.addCleanup(target.shutdown)
+        path = "/worker/api/sessions"
+        _Handler.responses[("GET", path)] = (302, {"redirect": True})
+        _Handler.locations[("GET", path)] = f"http://127.0.0.1:{target.server_port}/other-host"
+
+        with self.assertRaisesRegex(CloudError, "HTTP 302"):
+            self.client.get_index()
+
+        self.assertEqual(len(_Handler.requests), 1)
+        self.assertEqual(redirected_requests, [])
+
+    def test_delete_session_rejects_unsupported_schema(self):
+        _Handler.responses[("DELETE", "/worker/api/sessions/session")] = (200, {"schema_version": 2, "deleted": True})
+
+        with self.assertRaisesRegex(CloudError, "unsupported schema"):
+            self.client.delete_session("session")
+
+    def test_rejects_worker_urls_with_query_or_fragment(self):
+        for url in (
+            "https://worker.example/?next=elsewhere",
+            "https://worker.example/?",
+            "https://worker.example/#fragment",
+            "https://worker.example/#",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaisesRegex(CloudError, "invalid"):
+                    CloudClient(SyncConfig(url, "secret"))
+
 
 class SyncConfigTests(unittest.TestCase):
     def test_default_config_path_uses_xdg_config_location(self):
@@ -142,3 +195,44 @@ class SyncConfigTests(unittest.TestCase):
             path.write_text("not json", encoding="utf-8")
             with self.assertRaisesRegex(CloudError, "invalid"):
                 load_config(path)
+
+    def test_invalid_utf8_config_is_a_cloud_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sync.json"
+            path.write_bytes(b"\xff")
+
+            with self.assertRaisesRegex(CloudError, "invalid"):
+                load_config(path)
+
+    def test_save_config_mkdir_and_write_failures_are_cloud_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "sync.json"
+            config = SyncConfig("https://worker.example/", "secret")
+
+            with mock.patch.object(Path, "mkdir", side_effect=OSError("mkdir failed")):
+                with self.assertRaisesRegex(CloudError, "Could not save"):
+                    save_config(path, config)
+            with mock.patch("codex_session_manager.cloud_client.tempfile.NamedTemporaryFile", side_effect=OSError("write failed")):
+                with self.assertRaisesRegex(CloudError, "Could not save"):
+                    save_config(path, config)
+
+    def test_save_config_cleanup_failure_preserves_original_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sync.json"
+            config = SyncConfig("https://worker.example/", "secret")
+
+            with mock.patch("codex_session_manager.cloud_client.os.replace", side_effect=OSError("replace failed")):
+                with mock.patch.object(Path, "unlink", side_effect=OSError("cleanup failed")):
+                    with self.assertRaisesRegex(CloudError, "Could not save") as raised:
+                        save_config(path, config)
+
+            self.assertEqual(str(raised.exception.__cause__), "replace failed")
+
+    def test_save_config_unicode_write_failure_is_a_cloud_error_without_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "sync.json"
+
+            with self.assertRaisesRegex(CloudError, "Could not save"):
+                save_config(path, SyncConfig("https://worker.example/", "\ud800"))
+
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
