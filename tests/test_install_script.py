@@ -2,6 +2,7 @@ import hashlib
 import io
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -64,6 +65,7 @@ def replace_with_malformed_archive(release: Path) -> None:
     )
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux installer tests")
 class InstallScriptTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
