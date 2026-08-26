@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import curses
+import getpass
 import os
 import shutil
 import sys
@@ -11,7 +12,15 @@ from pathlib import Path
 from typing import Sequence
 
 from . import __version__
-from .app_server import AppServerClient
+from .app_server import AppServerClient, AppServerError
+from .cloud_client import (
+    CloudClient,
+    CloudError,
+    SyncConfig,
+    default_config_path,
+    load_config,
+    save_config,
+)
 from .compatibility import (
     CompatibilityState,
     CompatiblePreviewService,
@@ -19,6 +28,7 @@ from .compatibility import (
 )
 from .preview import PreviewService
 from .repository import SessionRepository
+from .sync import SyncResult, sync_sessions
 from .tui import run_tui
 
 
@@ -42,6 +52,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"%(prog)s {__version__}",
     )
+    commands = parser.add_subparsers(dest="command")
+    sync_parser = commands.add_parser("sync", help="同步 Codex 会话到云端")
+    sync_parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="force_all",
+        help="上传所有未删除的会话",
+    )
+    sync_commands = sync_parser.add_subparsers(dest="sync_command")
+    sync_commands.add_parser("setup", help="配置云端 Worker 和访问令牌")
+    sync_commands.add_parser("status", help="检查云端同步状态")
+    commands.add_parser("cloud", help="浏览云端会话（即将推出）")
     return parser
 
 
@@ -64,11 +86,9 @@ def resume_command(session_id: str, codex_path: str, codex_home: Path) -> None:
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _browse_local(codex_home: Path, no_color: bool) -> int:
     codex_path = shutil.which("codex")
     resume_error = "" if codex_path else "在 PATH 中找不到 codex，当前只能浏览会话"
-    codex_home = resolve_codex_home(args.codex_home)
 
     local_repository = SessionRepository(codex_home)
     local_previews = PreviewService()
@@ -89,7 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 compatibility,
             )
         try:
-            tui_options = {"use_color": not args.no_color}
+            tui_options = {"use_color": not no_color}
             if resume_error:
                 tui_options["resume_error"] = resume_error
             selected_id = run_tui(repository, previews, **tui_options)
@@ -113,3 +133,73 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"错误：无法启动 codex resume：{error}", file=sys.stderr)
         return 2
     return 0
+
+
+def _sync_setup() -> int:
+    config_path = default_config_path()
+    save_config(
+        config_path,
+        SyncConfig(input("Worker URL: ").strip(), getpass.getpass("Access token: ")),
+    )
+    print(f"saved: {config_path}")
+    return 0
+
+
+def _print_sync_result(result: SyncResult) -> int:
+    print(f"uploaded: {result.uploaded}")
+    print(f"skipped: {result.skipped}")
+    print(f"failed: {len(result.failed)}")
+    for session_id, message in result.failed:
+        print(f"{session_id}: {message}")
+    return 1 if result.failed else 0
+
+
+def _sync_status() -> int:
+    cloud = CloudClient(load_config(default_config_path()))
+    cloud.health()
+    index = cloud.get_index()
+    print(f"count: {len(index.get('sessions', []))}")
+    print(f"generated_at: {index.get('generated_at')}")
+    return 0
+
+
+def _sync_upload(codex_home: Path, force_all: bool) -> int:
+    config = load_config(default_config_path())
+    codex_path = shutil.which("codex")
+    if not codex_path:
+        print("错误：在 PATH 中找不到 codex，无法同步会话", file=sys.stderr)
+        return 2
+
+    app_server: AppServerClient | None = None
+    try:
+        app_server = AppServerClient(codex_path, codex_home, __version__)
+        cloud = CloudClient(config)
+        return _print_sync_result(
+            sync_sessions(app_server, cloud, force_all=force_all)
+        )
+    finally:
+        if app_server is not None:
+            app_server.close()
+
+
+def _run_sync(args: argparse.Namespace, codex_home: Path) -> int:
+    try:
+        if args.sync_command == "setup":
+            return _sync_setup()
+        if args.sync_command == "status":
+            return _sync_status()
+        return _sync_upload(codex_home, args.force_all)
+    except (CloudError, AppServerError) as error:
+        print(f"错误：{error}", file=sys.stderr)
+        return 2
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    codex_home = resolve_codex_home(args.codex_home)
+    if args.command == "sync":
+        return _run_sync(args, codex_home)
+    if args.command == "cloud":
+        print("错误：cloud 浏览功能尚未实现", file=sys.stderr)
+        return 2
+    return _browse_local(codex_home, args.no_color)
