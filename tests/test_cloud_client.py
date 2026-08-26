@@ -110,6 +110,21 @@ class CloudClientTests(unittest.TestCase):
         with self.assertRaisesRegex(CloudError, "HTTP 503"):
             self.client.get_index()
 
+    def test_stalled_request_uses_finite_timeout_and_returns_cloud_error(self):
+        opener = mock.Mock()
+        opener.open.side_effect = TimeoutError("timed out")
+        client = CloudClient(
+            SyncConfig("https://worker.example", "secret"), timeout=0.25
+        )
+
+        with mock.patch(
+            "codex_session_manager.cloud_client.build_opener", return_value=opener
+        ):
+            with self.assertRaisesRegex(CloudError, "timed out"):
+                client.get_index()
+
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 0.25)
+
     def test_rejects_malformed_or_unsupported_json(self):
         _Handler.responses[("GET", "/worker/api/sessions")] = (200, b"not json")
         with self.assertRaisesRegex(CloudError, "invalid JSON"):

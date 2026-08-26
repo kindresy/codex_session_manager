@@ -23,9 +23,21 @@ _INJECTED_BLOCKS = (
         r"<INSTRUCTIONS>.*?</INSTRUCTIONS>\s*",
         re.DOTALL,
     ),
-    re.compile(r"<environment_context\b[^>]*>.*?</environment_context>\s*", re.DOTALL),
-    re.compile(r"<permissions instructions>.*?</permissions instructions>\s*", re.DOTALL),
-    re.compile(r"<skills_instructions>.*?</skills_instructions>\s*", re.DOTALL),
+    re.compile(
+        r"<permissions instructions>.*?</permissions(?: instructions)?>\s*",
+        re.DOTALL,
+    ),
+    re.compile(
+        r"<(?P<tag>(?:[a-z][a-z0-9-]*(?:_instructions|_context)|"
+        r"recommended_plugins|claude-mem-context|permissions|"
+        r"collaboration_mode|multi_agent_mode))\b[^>]*>.*?</(?P=tag)>\s*",
+        re.DOTALL,
+    ),
+)
+
+_INJECTED_OPENING = re.compile(
+    r"<(?:[a-z][a-z0-9-]*(?:_instructions|_context)|recommended_plugins|"
+    r"claude-mem-context|permissions|collaboration_mode|multi_agent_mode)\b"
 )
 
 
@@ -34,6 +46,8 @@ def clean_user_text(text: str) -> str:
     value = text
     for pattern in _INJECTED_BLOCKS:
         value = pattern.sub("", value)
+    if _INJECTED_OPENING.search(value):
+        return ""
     value = re.sub(r"\n{3,}", "\n\n", value).strip()
     if not value:
         return ""

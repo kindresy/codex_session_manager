@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -62,8 +63,15 @@ def save_config(path: str | Path, config: SyncConfig) -> None:
 
 
 class CloudClient:
-    def __init__(self, config: SyncConfig):
+    def __init__(self, config: SyncConfig, timeout: float = 10.0):
         config = _config_from_value({"worker_url": config.worker_url, "token": config.token})
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise CloudError("Cloud request timeout is invalid.")
         try:
             parsed = urlparse(config.worker_url)
             hostname = parsed.hostname
@@ -83,6 +91,7 @@ class CloudClient:
             raise CloudError("Cloud worker URL is invalid.")
         self._worker_url = config.worker_url.rstrip("/")
         self._token = config.token
+        self._timeout = float(timeout)
 
     def get_index(self) -> dict[str, Any]:
         return self._versioned(self._request("GET", "/api/sessions"))
@@ -122,7 +131,9 @@ class CloudClient:
             headers["Content-Type"] = "application/json; charset=utf-8"
         try:
             request = Request(self._worker_url + path, data=data, headers=headers, method=method)
-            with build_opener(_NoRedirect()).open(request) as response:
+            with build_opener(_NoRedirect()).open(
+                request, timeout=self._timeout
+            ) as response:
                 return _decode_json(response.read())
         except HTTPError as error:
             if error.code == 401:
@@ -130,6 +141,8 @@ class CloudClient:
             raise CloudError(f"Cloud request failed (HTTP {error.code}).") from error
         except URLError as error:
             raise CloudError(f"Could not reach cloud service: {error.reason}") from error
+        except TimeoutError as error:
+            raise CloudError("Cloud request timed out.") from error
         except (UnicodeError, ValueError) as error:
             raise CloudError("Cloud request is invalid.") from error
 

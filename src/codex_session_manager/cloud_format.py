@@ -32,7 +32,7 @@ def normalize_cloud_session(session: Session, response: Any) -> dict[str, Any]:
 
 def _normalize_turn(turn: Any) -> list[dict[str, Any]]:
     if not isinstance(turn, dict) or not isinstance(turn.get("items"), list):
-        return []
+        raise ValueError("invalid thread turn")
     result: list[dict[str, Any]] = []
     for item in turn["items"]:
         normalized = _normalize_item(item)
@@ -43,8 +43,10 @@ def _normalize_turn(turn: Any) -> list[dict[str, Any]]:
 
 def _normalize_item(item: Any) -> list[dict[str, Any]] | None:
     if not isinstance(item, dict):
-        return None
+        raise ValueError("invalid thread item")
     item_type = item.get("type")
+    if not isinstance(item_type, str) or not item_type:
+        raise ValueError("invalid thread item type")
     if item_type == "userMessage":
         return _user_message(item)
     if item_type == "agentMessage":
@@ -59,15 +61,19 @@ def _normalize_item(item: Any) -> list[dict[str, Any]] | None:
 def _user_message(item: dict[str, Any]) -> list[dict[str, Any]] | None:
     content = item.get("content")
     if not isinstance(content, list):
-        return None
-    parts = [
-        cleaned
-        for entry in content
-        if isinstance(entry, dict)
-        and entry.get("type") == "text"
-        and isinstance(entry.get("text"), str)
-        and (cleaned := clean_user_text(entry["text"]))
-    ]
+        raise ValueError("invalid user message content")
+    parts: list[str] = []
+    for entry in content:
+        if not isinstance(entry, dict) or not isinstance(entry.get("type"), str):
+            raise ValueError("invalid user message content entry")
+        if entry["type"] != "text":
+            continue
+        text = entry.get("text")
+        if not isinstance(text, str):
+            raise ValueError("invalid user message text")
+        cleaned = clean_user_text(text)
+        if cleaned:
+            parts.append(cleaned)
     if not parts:
         return None
     return [{"type": "user", "text": "\n\n".join(parts)}]
@@ -75,7 +81,9 @@ def _user_message(item: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 def _agent_message(item: dict[str, Any]) -> list[dict[str, Any]] | None:
     text = item.get("text")
-    if not isinstance(text, str) or not (text := text.strip()):
+    if not isinstance(text, str):
+        raise ValueError("invalid agent message text")
+    if not (text := text.strip()):
         return None
     return [{"type": "assistant", "text": text}]
 
@@ -95,7 +103,7 @@ def _command_execution(item: dict[str, Any]) -> list[dict[str, Any]] | None:
         or not isinstance(output, str)
         or (exit_code is not None and type(exit_code) is not int)
     ):
-        return None
+        raise ValueError("invalid command execution")
     return [
         {
             "type": "command",
@@ -111,15 +119,15 @@ def _command_execution(item: dict[str, Any]) -> list[dict[str, Any]] | None:
 def _file_changes(item: dict[str, Any]) -> list[dict[str, Any]] | None:
     changes = item.get("changes")
     if not isinstance(changes, list):
-        return None
+        raise ValueError("invalid file changes")
     result: list[dict[str, Any]] = []
     for change in changes:
         if not isinstance(change, dict):
-            continue
+            raise ValueError("invalid file change")
         path = change.get("path")
         kind = change.get("kind")
         diff = change.get("diff")
         if not isinstance(path, str) or not isinstance(kind, str) or not isinstance(diff, str):
-            continue
+            raise ValueError("invalid file change")
         result.append({"type": "file_change", "path": path, "kind": kind, "diff": diff})
     return result or None

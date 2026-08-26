@@ -102,18 +102,32 @@ class CloudFormatTests(unittest.TestCase):
             },
         )
 
-    def test_rejects_invalid_response_containers_but_omits_malformed_items(self):
+    def test_rejects_invalid_response_containers_and_malformed_known_items(self):
         session = Session("id", "question", "/work", 1.0, 2.0, "")
-        for response in (None, {}, {"thread": []}, {"thread": {"turns": {}}}):
+        for response in (
+            None,
+            {},
+            {"thread": []},
+            {"thread": {"turns": {}}},
+            {"thread": {"turns": [{"items": "invalid"}]}},
+            {"thread": {"turns": [{"items": [None]}]}},
+            {"thread": {"turns": [{"items": [{"type": "agentMessage"}]}]}},
+            {"thread": {"turns": [{"items": [{"type": "commandExecution"}]}]}},
+            {"thread": {"turns": [{"items": [{"type": "fileChange"}]}]}},
+        ):
             with self.subTest(response=response):
                 with self.assertRaises(ValueError):
                     normalize_cloud_session(session, response)
 
+    def test_omits_well_formed_unknown_item_types(self):
+        session = Session("id", "question", "/work", 1.0, 2.0, "")
+
         payload = normalize_cloud_session(
             session,
-            {"thread": {"turns": [{"items": "invalid"}, {"items": [None]}]}},
+            {"thread": {"turns": [{"items": [{"type": "futureItem"}]}]}},
         )
-        self.assertEqual(payload["turns"], [{"items": []}, {"items": []}])
+
+        self.assertEqual(payload["turns"], [{"items": []}])
 
     def test_normalizes_missing_command_output_to_an_empty_string(self):
         session = Session("id", "question", "/work", 1.0, 2.0, "")

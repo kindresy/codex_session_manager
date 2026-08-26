@@ -199,6 +199,30 @@ class SyncSessionsTests(unittest.TestCase):
         self.assertEqual([payload["id"] for payload in cloud.uploads], ["good"])
         self.assertIn(old_entry, cloud.index_writes[0]["sessions"])
 
+    def test_malformed_known_item_is_failed_and_old_index_entry_is_retained(self):
+        old_entry = _entry("changed", 10, "old remote question")
+        app_server = _AppServer([_session("changed", 30)])
+        app_server.read_thread = mock.Mock(
+            return_value={
+                "thread": {"turns": [{"items": [{"type": "agentMessage"}]}]}
+            }
+        )
+        cloud = _Cloud(
+            {
+                "schema_version": 1,
+                "sessions": [old_entry],
+                "deleted_ids": [],
+            }
+        )
+
+        result = sync_sessions(app_server, cloud)
+
+        self.assertEqual(result.uploaded, 0)
+        self.assertEqual(result.skipped, 0)
+        self.assertEqual(result.failed[0][0], "changed")
+        self.assertEqual(cloud.uploads, [])
+        self.assertIn(old_entry, cloud.index_writes[0]["sessions"])
+
     def test_failed_upload_is_reported_and_new_entry_is_not_indexed(self):
         app_server = _AppServer([_session("bad", 30), _session("good", 20)])
         cloud = _Cloud(

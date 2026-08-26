@@ -272,9 +272,27 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(float(result.stdout), expected)
 
     def test_clean_user_text_ignores_injected_context(self):
-        self.assertEqual(clean_user_text("<environment_context>x</environment_context>"), "")
+        wrappers = (
+            "<environment_context>x</environment_context>",
+            "<permissions instructions>x</permissions instructions>",
+            "<skills_instructions>x</skills_instructions>",
+            "<apps_instructions>x</apps_instructions>",
+            "<plugins_instructions>x</plugins_instructions>",
+            "<recommended_plugins>x</recommended_plugins>",
+            "<claude-mem-context>x</claude-mem-context>",
+            "<collaboration_mode>x</collaboration_mode>",
+            "<multi_agent_mode>x</multi_agent_mode>",
+        )
+        for wrapper in wrappers:
+            with self.subTest(wrapper=wrapper):
+                self.assertEqual(clean_user_text(wrapper), "")
         self.assertEqual(clean_user_text("# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>x</INSTRUCTIONS>"), "")
         self.assertEqual(clean_user_text("  帮我实现功能  "), "帮我实现功能")
+
+    def test_clean_user_text_fails_closed_for_unterminated_platform_wrapper(self):
+        self.assertEqual(
+            clean_user_text("<future_instructions>secret\n真正的问题"), ""
+        )
 
     def test_clean_user_text_preserves_prompt_after_injected_context(self):
         combined = (
