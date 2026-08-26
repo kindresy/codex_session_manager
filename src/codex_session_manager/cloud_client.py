@@ -64,7 +64,10 @@ def save_config(path: str | Path, config: SyncConfig) -> None:
 class CloudClient:
     def __init__(self, config: SyncConfig):
         config = _config_from_value({"worker_url": config.worker_url, "token": config.token})
-        parsed = urlparse(config.worker_url)
+        try:
+            parsed = urlparse(config.worker_url)
+        except (UnicodeError, ValueError) as error:
+            raise CloudError("Cloud worker URL is invalid.") from error
         if parsed.scheme not in {"http", "https"} or not parsed.netloc or "?" in config.worker_url or "#" in config.worker_url:
             raise CloudError("Cloud worker URL is invalid.")
         self._worker_url = config.worker_url.rstrip("/")
@@ -96,15 +99,18 @@ class CloudClient:
     def _session_path(self, session_id: str) -> str:
         if not isinstance(session_id, str) or not session_id:
             raise CloudError("Cloud session ID is invalid.")
-        return "/api/sessions/" + quote(session_id, safe="")
+        try:
+            return "/api/sessions/" + quote(session_id, safe="")
+        except UnicodeError as error:
+            raise CloudError("Cloud session ID is invalid.") from error
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         data = None if payload is None else _encode_json(payload)
         headers = {"Authorization": f"Bearer {self._token}"}
         if data is not None:
             headers["Content-Type"] = "application/json; charset=utf-8"
-        request = Request(self._worker_url + path, data=data, headers=headers, method=method)
         try:
+            request = Request(self._worker_url + path, data=data, headers=headers, method=method)
             with build_opener(_NoRedirect()).open(request) as response:
                 return _decode_json(response.read())
         except HTTPError as error:
@@ -113,6 +119,8 @@ class CloudClient:
             raise CloudError(f"Cloud request failed (HTTP {error.code}).") from error
         except URLError as error:
             raise CloudError(f"Could not reach cloud service: {error.reason}") from error
+        except (UnicodeError, ValueError) as error:
+            raise CloudError("Cloud request is invalid.") from error
 
     def _versioned(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._validate_version(payload)

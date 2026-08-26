@@ -171,6 +171,19 @@ class CloudClientTests(unittest.TestCase):
                 with self.assertRaisesRegex(CloudError, "invalid"):
                     CloudClient(SyncConfig(url, "secret"))
 
+    def test_public_input_errors_are_cloud_errors(self):
+        with self.assertRaisesRegex(CloudError, "invalid"):
+            CloudClient(SyncConfig("http://[::1", "secret"))
+
+        with self.assertRaisesRegex(CloudError, "ID"):
+            self.client.get_session("\ud800")
+
+        client = CloudClient(
+            SyncConfig(f"http://127.0.0.1:{self.server.server_port}/worker", "bad\ntoken")
+        )
+        with self.assertRaisesRegex(CloudError, "request"):
+            client.get_index()
+
 
 class SyncConfigTests(unittest.TestCase):
     def test_default_config_path_uses_xdg_config_location(self):
