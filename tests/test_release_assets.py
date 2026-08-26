@@ -270,6 +270,9 @@ class ReleaseAssetTests(unittest.TestCase):
             "https://developers.openai.com/codex/app-server/",
             "https://developers.cloudflare.com/r2/get-started/workers-api/",
             "https://developers.cloudflare.com/workers/static-assets/",
+            "Node.js 22",
+            "只读是指不会修改 `$CODEX_HOME`",
+            "sync config 和 R2",
         )
         for value in required:
             with self.subTest(value=value):

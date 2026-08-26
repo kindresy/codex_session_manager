@@ -154,7 +154,7 @@ Cloud 功能把本机 Codex 会话手动上传到你自己的 Cloudflare Worker 
 ### 部署前提
 
 - 一个启用了 Workers、R2 和 `workers.dev` 的 Cloudflare 账户。
-- 已安装 Node.js 20 或更高版本及 npm；它们只用于首次部署和更新 Cloud 组件。
+- 已安装 Node.js 22 或更高版本及 npm；它们只用于首次部署和更新 Cloud 组件。
 - 已 clone 本仓库，并能在本机运行 `codex-session` 和 Codex CLI。
 - 一个由密码管理器生成、只供自己使用的强随机 Bearer token。不要使用 OpenAI API key 或 Cloudflare API token。
 
@@ -216,7 +216,7 @@ python3 -m pip install --upgrade codex-session-manager
 
 `$CODEX_HOME`（或 `--codex-home` 指定的目录）会传递给 Codex App Server，并同样用于本地兼容模式，因此两种读取方式查看的是同一份 Codex 数据。
 
-本工具对 Codex 数据完全只读，不会修改数据库、session JSONL、索引、认证信息或配置文件。仓库中的自动测试只使用合成 fixture，不包含真实对话或凭据。
+这里的只读是指不会修改 `$CODEX_HOME` 中的数据库、session JSONL、索引或认证信息；Cloud 功能会按用户操作写入本机 sync config 和 R2，这是配置与同步所必需的写入。仓库中的自动测试只使用合成 fixture，不包含真实对话或凭据。
 
 ## 故障排查
 

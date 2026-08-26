@@ -72,6 +72,7 @@ async function deleteSession(id, env) {
     ...current,
     sessions: current.sessions.filter((entry) => entry.id !== id),
     deleted_ids: current.deleted_ids.includes(id) ? current.deleted_ids : [...current.deleted_ids, id],
+    generated_at: Date.now() / 1000,
   };
   await write(env, "index.json", updated);
   await env.SESSIONS.delete(sessionKey(id));

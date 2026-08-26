@@ -358,7 +358,8 @@ test("stored indexes are revalidated without reporting data errors as R2 failure
   assert.deepEqual(await body(response), { error: "invalid_data" });
 });
 
-test("delete writes a tombstoned index before deleting the session", async () => {
+test("delete writes a timestamped tombstone index before deleting the session", async (t) => {
+  t.mock.method(Date, "now", () => 12_000);
   const id = "id/中文";
   const index = {
     schema_version: 1,
@@ -383,6 +384,7 @@ test("delete writes a tombstoned index before deleting the session", async () =>
     ...index,
     sessions: index.sessions.slice(1),
     deleted_ids: ["old", id],
+    generated_at: 12,
   });
   assert.equal(env.SESSIONS.values.has(sessionKey(id)), false);
 });

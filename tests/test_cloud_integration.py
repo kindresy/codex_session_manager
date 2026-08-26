@@ -1,8 +1,10 @@
 import json
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
+from unittest import mock
 
 from codex_session_manager.cloud_client import CloudClient, SyncConfig
 from codex_session_manager.cloud_repository import (
@@ -56,6 +58,7 @@ class _WorkerHandler(BaseHTTPRequestHandler):
         ]
         if session_id not in type(self).index["deleted_ids"]:
             type(self).index["deleted_ids"].append(session_id)
+        type(self).index["generated_at"] = time.time()
         return self._json(200, {"schema_version": 1, "deleted": True})
 
     def _authorized(self):
@@ -132,9 +135,11 @@ class CloudIntegrationTests(unittest.TestCase):
         self.server.server_close()
 
     def test_upload_list_read_and_delete_with_synthetic_data(self):
-        result = sync_sessions(_SyntheticAppServer(), self.client)
+        with mock.patch("codex_session_manager.sync.time.time", return_value=0):
+            result = sync_sessions(_SyntheticAppServer(), self.client)
         sessions = CloudSessionRepository(self.client).list_sessions()
         preview = CloudPreviewService(self.client).get(sessions[0])
+        generated_before_delete = _WorkerHandler.index["generated_at"]
         deleted = self.client.delete_session(SESSION_ID)
 
         self.assertEqual(result, SyncResult(uploaded=1, skipped=0, failed=()))
@@ -144,6 +149,8 @@ class CloudIntegrationTests(unittest.TestCase):
         self.assertEqual(_WorkerHandler.sessions, {})
         self.assertEqual(_WorkerHandler.index["sessions"], [])
         self.assertEqual(_WorkerHandler.index["deleted_ids"], [SESSION_ID])
+        self.assertEqual(generated_before_delete, 0)
+        self.assertGreater(_WorkerHandler.index["generated_at"], generated_before_delete)
         self.assertEqual(
             _WorkerHandler.requests,
             [
