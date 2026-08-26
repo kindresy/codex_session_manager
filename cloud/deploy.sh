@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+export WRANGLER_HIDE_BANNER=1
 
 bucket_name='codex-session-history'
 
@@ -27,10 +28,26 @@ if bucket_output=$(npx --no-install wrangler r2 bucket create codex-session-hist
     :
 else
     bucket_status=$?
-    if [ "$bucket_output" != "Bucket $bucket_name already exists." ]; then
-        printf 'Could not create R2 bucket %s: %s\n' "$bucket_name" "$bucket_output" >&2
-        exit "$bucket_status"
-    fi
+    case "$bucket_output" in
+        *"$bucket_name"*) ;;
+        *)
+            printf 'Could not create R2 bucket %s: %s\n' "$bucket_name" "$bucket_output" >&2
+            exit "$bucket_status"
+            ;;
+    esac
+    case "$bucket_output" in
+        *'[code: 10073]'*) ;;
+        *)
+            printf 'Could not create R2 bucket %s: %s\n' "$bucket_name" "$bucket_output" >&2
+            exit "$bucket_status"
+            ;;
+    esac
+    case "$bucket_output" in
+        *'[code:'*'[code:'*)
+            printf 'Could not create R2 bucket %s: %s\n' "$bucket_name" "$bucket_output" >&2
+            exit "$bucket_status"
+            ;;
+    esac
     printf 'R2 bucket %s already exists; continuing.\n' "$bucket_name"
 fi
 
@@ -42,12 +59,13 @@ else
     printf 'Could not list custom domains for R2 bucket %s: %s\n' "$bucket_name" "$domain_output" >&2
     exit "$domain_status"
 fi
-empty_domain_output="Listing custom domains connected to bucket '$bucket_name'...
-There are no custom domains connected to this bucket."
-if [ "$domain_output" != "$empty_domain_output" ]; then
-    printf 'R2 bucket %s has custom domains. Remove them before deploying.\n' "$bucket_name" >&2
-    exit 1
-fi
+case "$domain_output" in
+    *'There are no custom domains'*) ;;
+    *)
+        printf 'R2 bucket %s has custom domains. Remove them before deploying.\n' "$bucket_name" >&2
+        exit 1
+        ;;
+esac
 
 terminal_hidden=0
 restore_terminal() {

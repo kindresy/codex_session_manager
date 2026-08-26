@@ -12,8 +12,14 @@ PACKAGE = ROOT / "cloud" / "package.json"
 LOCKFILE = ROOT / "cloud" / "package-lock.json"
 BUCKET = "codex-session-history"
 EMPTY_DOMAINS = (
+    " ⛅ wrangler 4.125.0\n"
     f"Listing custom domains connected to bucket '{BUCKET}'...\n"
     "There are no custom domains connected to this bucket."
+)
+BUCKET_EXISTS = (
+    " ⛅ wrangler 4.125.0\n"
+    "✘ [ERROR] A request to the Cloudflare API failed.\n"
+    f"  [code: 10073] Bucket {BUCKET} already exists."
 )
 
 
@@ -29,6 +35,10 @@ class CloudDeployTests(unittest.TestCase):
             "npx",
             f"""
 printf '%s\\n' \"$*\" >> \"$CALL_LOG\"
+if [ \"${{WRANGLER_HIDE_BANNER:-}}\" != 1 ]; then
+  printf 'WRANGLER_HIDE_BANNER was not set\\n' >&2
+  exit 98
+fi
 case \"$*\" in
   '--no-install wrangler login')
     exit \"${{LOGIN_STATUS:-0}}\"
@@ -106,6 +116,7 @@ esac
         self.assertIn("stty -echo", source)
         self.assertIn("trap", source)
         self.assertIn("set +x", source)
+        self.assertIn("export WRANGLER_HIDE_BANNER=1", source)
 
     def test_pins_local_wrangler_in_the_lockfile(self):
         package = json.loads(PACKAGE.read_text(encoding="utf-8"))
@@ -135,10 +146,10 @@ esac
         self.assertIn("https://example.workers.dev", result.stdout)
         self.assertIn("codex-session sync setup", result.stdout)
 
-    def test_exact_existing_bucket_message_continues_with_private_access(self):
+    def test_real_wrapper_existing_bucket_message_continues_with_private_access(self):
         result = self.run_deploy(
             BUCKET_STATUS="1",
-            BUCKET_OUTPUT=f"Bucket {BUCKET} already exists.",
+            BUCKET_OUTPUT=BUCKET_EXISTS,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -148,10 +159,10 @@ esac
             self.calls(),
         )
 
-    def test_mixed_existing_bucket_error_stops_before_access_changes(self):
+    def test_mixed_bucket_error_codes_stop_before_access_changes(self):
         result = self.run_deploy(
             BUCKET_STATUS="1",
-            BUCKET_OUTPUT=f"Bucket {BUCKET} already exists.\nauthentication failed",
+            BUCKET_OUTPUT=f"{BUCKET_EXISTS}\n  [code: 10000] authentication failed",
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -159,10 +170,28 @@ esac
         self.assertEqual(self.calls(), self.expected_calls()[:2])
 
     def test_custom_domains_stop_before_secret_or_deploy(self):
-        result = self.run_deploy(DOMAINS_OUTPUT="history.example.com")
+        result = self.run_deploy(
+            DOMAINS_OUTPUT=(
+                " ⛅ wrangler 4.125.0\n"
+                "Listing custom domains connected to bucket "
+                f"'{BUCKET}'...\nhistory.example.com"
+            )
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("custom domains", result.stderr)
+        self.assertEqual(self.calls(), self.expected_calls())
+
+    def test_dev_url_failure_stops_before_domain_listing(self):
+        result = self.run_deploy(DEV_URL_STATUS="1")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), self.expected_calls()[:3])
+
+    def test_domain_list_failure_stops_before_secret_or_deploy(self):
+        result = self.run_deploy(DOMAINS_STATUS="1")
+
+        self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.calls(), self.expected_calls())
 
     def test_missing_npm_stops_before_wrangler(self):
@@ -182,6 +211,13 @@ esac
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("npx", result.stderr)
         self.assertFalse(self.log.exists())
+
+    def test_empty_token_stops_before_secret_or_deploy(self):
+        result = self.run_deploy("")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SYNC_TOKEN cannot be empty", result.stderr)
+        self.assertEqual(self.calls(), self.expected_calls())
 
     def test_login_failure_stops_before_bucket_creation(self):
         result = self.run_deploy(LOGIN_STATUS="1")
