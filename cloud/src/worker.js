@@ -35,7 +35,8 @@ export default {
         if (request.method === "DELETE") return await deleteSession(id, env);
       }
       return error("not_found", 404);
-    } catch {
+    } catch (caught) {
+      if (caught instanceof StoredDataError) return error(caught.code, 400);
       return error("storage_failure", 500);
     }
   },
@@ -44,7 +45,7 @@ export default {
 async function getSession(id, env) {
   const object = await env.SESSIONS.get(sessionKey(id));
   if (object === null) return error("not_found", 404);
-  return json(await object.json());
+  return json(await readStored(object, (payload) => validSession(payload, id)));
 }
 
 async function putSession(request, id, env) {
@@ -79,7 +80,29 @@ async function deleteSession(id, env) {
 
 async function readIndex(env) {
   const object = await env.SESSIONS.get("index.json");
-  return object === null ? EMPTY_INDEX : object.json();
+  return object === null ? EMPTY_INDEX : readStored(object, validIndex);
+}
+
+async function readStored(object, validate) {
+  let payload;
+  try {
+    payload = await object.json();
+  } catch {
+    throw new StoredDataError("invalid_data");
+  }
+  if (!objectValue(payload)) throw new StoredDataError("invalid_data");
+  if (payload.schema_version !== 1) {
+    throw new StoredDataError(Object.hasOwn(payload, "schema_version") ? "unsupported_schema" : "invalid_data");
+  }
+  if (!validate(payload)) throw new StoredDataError("invalid_data");
+  return payload;
+}
+
+class StoredDataError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
 }
 
 async function requestPayload(request) {
@@ -95,10 +118,20 @@ function sessionId(pathname) {
   const encoded = pathname.slice("/api/sessions/".length);
   if (!encoded || encoded.includes("/")) return null;
   try {
-    return decodeURIComponent(encoded) || null;
+    const id = decodeURIComponent(encoded);
+    return validId(id) ? id : null;
   } catch {
     return null;
   }
+}
+
+function validId(id) {
+  return (
+    typeof id === "string" &&
+    id.length > 0 &&
+    encoder.encode(id).length <= 750 &&
+    !/[\u0000-\u001F\u007F]/.test(id)
+  );
 }
 
 function validSession(payload, id) {
@@ -110,17 +143,39 @@ function validSession(payload, id) {
     finiteNumber(payload.created_at) &&
     finiteNumber(payload.updated_at) &&
     typeof payload.cwd === "string" &&
-    Array.isArray(payload.turns)
+    Array.isArray(payload.turns) &&
+    payload.turns.every(validTurn)
   );
 }
 
+function validTurn(turn) {
+  return objectValue(turn) && Array.isArray(turn.items) && turn.items.every(validItem);
+}
+
+function validItem(item) {
+  return objectValue(item) && typeof item.type === "string";
+}
+
+function objectValue(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function validIndex(payload) {
+  if (
+    !Array.isArray(payload.sessions) ||
+    !payload.sessions.every(validIndexEntry) ||
+    !Array.isArray(payload.deleted_ids) ||
+    !payload.deleted_ids.every(validId) ||
+    (payload.generated_at !== null && !finiteNumber(payload.generated_at))
+  ) {
+    return false;
+  }
+  const sessionIds = payload.sessions.map((entry) => entry.id);
+  const deletedIds = new Set(payload.deleted_ids);
   return (
-    Array.isArray(payload.sessions) &&
-    payload.sessions.every(validIndexEntry) &&
-    Array.isArray(payload.deleted_ids) &&
-    payload.deleted_ids.every((id) => typeof id === "string" && id.length > 0) &&
-    (payload.generated_at === undefined || payload.generated_at === null || finiteNumber(payload.generated_at))
+    new Set(sessionIds).size === sessionIds.length &&
+    deletedIds.size === payload.deleted_ids.length &&
+    sessionIds.every((id) => !deletedIds.has(id))
   );
 }
 
@@ -129,8 +184,7 @@ function validIndexEntry(entry) {
     entry !== null &&
     typeof entry === "object" &&
     !Array.isArray(entry) &&
-    typeof entry.id === "string" &&
-    entry.id.length > 0 &&
+    validId(entry.id) &&
     typeof entry.question === "string" &&
     finiteNumber(entry.created_at) &&
     finiteNumber(entry.updated_at) &&
@@ -143,7 +197,11 @@ function finiteNumber(value) {
 }
 
 function sessionKey(id) {
-  return `sessions/${id}.json`;
+  const encoded = btoa(String.fromCharCode(...encoder.encode(id)))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+  return `sessions/${encoded}.json`;
 }
 
 async function write(env, key, value) {

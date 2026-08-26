@@ -80,6 +80,10 @@ function session(id = "session") {
   };
 }
 
+function sessionKey(id) {
+  return `sessions/${Buffer.from(id).toString("base64url")}.json`;
+}
+
 test("health is public and non-API requests use static assets", async () => {
   const env = environment();
   const health = await request(env, "/health", { auth: false });
@@ -130,7 +134,7 @@ test("session upload and read preserve UTF-8 JSON under the decoded full ID", as
   const uploaded = await request(env, path, { method: "PUT", json: payload });
   assert.equal(uploaded.status, 200);
   assert.deepEqual(await body(uploaded), payload);
-  assert.deepEqual(JSON.parse(env.SESSIONS.values.get(`sessions/${id}.json`)), payload);
+  assert.deepEqual(JSON.parse(env.SESSIONS.values.get(sessionKey(id))), payload);
 
   const downloaded = await request(env, path);
   assert.equal(downloaded.status, 200);
@@ -148,11 +152,39 @@ test("missing sessions and unknown API paths return JSON 404 errors", async () =
 });
 
 test("session IDs must be a non-empty, well-encoded single path segment", async () => {
-  for (const path of ["/api/sessions/", "/api/sessions/unencoded/slash", "/api/sessions/%"]) {
+  for (const path of [
+    "/api/sessions/",
+    "/api/sessions/unencoded/slash",
+    "/api/sessions/%",
+    "/api/sessions/%00",
+    "/api/sessions/%1F",
+    "/api/sessions/%7F",
+    `/api/sessions/${"a".repeat(751)}`,
+  ]) {
     const response = await request(environment(), path);
     assert.equal(response.status, 400, path);
     assert.deepEqual(await body(response), { error: "invalid_id" });
   }
+
+  const maximum = await request(environment(), `/api/sessions/${"a".repeat(750)}`);
+  assert.equal(maximum.status, 404);
+});
+
+test("byte-distinct Unicode IDs use distinct ASCII R2 keys", async () => {
+  const env = environment();
+  const ids = ["\u00e9", "e\u0301"];
+  for (const id of ids) {
+    const response = await request(env, `/api/sessions/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      json: session(id),
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const keys = [...env.SESSIONS.values.keys()];
+  assert.deepEqual(keys, ids.map(sessionKey));
+  assert.notEqual(keys[0], keys[1]);
+  assert.ok(keys.every((key) => /^[\x20-\x7E]+$/.test(key)));
 });
 
 test("session uploads validate schema, path identity, and metadata types", async (t) => {
@@ -165,6 +197,11 @@ test("session uploads validate schema, path identity, and metadata types", async
     ["invalid updated_at", { ...valid, updated_at: Infinity }, "invalid_payload"],
     ["invalid cwd", { ...valid, cwd: 4 }, "invalid_payload"],
     ["invalid turns", { ...valid, turns: {} }, "invalid_payload"],
+    ["invalid turn", { ...valid, turns: [null] }, "invalid_payload"],
+    ["invalid items", { ...valid, turns: [{ items: {} }] }, "invalid_payload"],
+    ["invalid item", { ...valid, turns: [{ items: [null] }] }, "invalid_payload"],
+    ["missing item type", { ...valid, turns: [{ items: [{}] }] }, "invalid_payload"],
+    ["invalid item type", { ...valid, turns: [{ items: [{ type: 3 }] }] }, "invalid_payload"],
   ];
   for (const [name, payload, error] of cases) {
     await t.test(name, async () => {
@@ -181,6 +218,13 @@ test("session uploads validate schema, path identity, and metadata types", async
   });
   assert.equal(malformed.status, 400);
   assert.deepEqual(await body(malformed), { error: "invalid_payload" });
+
+  const unknownType = { ...valid, turns: [{ items: [{ type: "future_type", value: 1 }] }] };
+  const accepted = await request(environment(), "/api/sessions/session", {
+    method: "PUT",
+    json: unknownType,
+  });
+  assert.equal(accepted.status, 200);
 });
 
 test("index uploads require schema 1 and list fields", async () => {
@@ -200,11 +244,65 @@ test("index uploads require schema 1 and list fields", async () => {
     [{ ...valid, schema_version: 2 }, "unsupported_schema"],
     [{ ...valid, sessions: {} }, "invalid_payload"],
     [{ ...valid, deleted_ids: "gone" }, "invalid_payload"],
+    [{ ...valid, generated_at: "now" }, "invalid_payload"],
+    [
+      { schema_version: 1, sessions: valid.sessions, deleted_ids: valid.deleted_ids },
+      "invalid_payload",
+    ],
+    [{ ...valid, sessions: [{ ...valid.sessions[0], cwd: undefined }] }, "invalid_payload"],
+    [{ ...valid, sessions: [{ ...valid.sessions[0], id: "bad\u0000id" }] }, "invalid_payload"],
+    [{ ...valid, sessions: [valid.sessions[0], valid.sessions[0]] }, "invalid_payload"],
+    [{ ...valid, deleted_ids: ["gone", "gone"] }, "invalid_payload"],
+    [{ ...valid, deleted_ids: ["session"] }, "invalid_payload"],
   ]) {
     const response = await request(environment(), "/api/index", { method: "PUT", json: payload });
     assert.equal(response.status, 400);
     assert.deepEqual(await body(response), { error });
   }
+
+  const nullGeneratedAt = await request(environment(), "/api/index", {
+    method: "PUT",
+    json: { ...valid, generated_at: null },
+  });
+  assert.equal(nullGeneratedAt.status, 200);
+});
+
+test("stored sessions are revalidated without reporting data errors as R2 failures", async () => {
+  const cases = [
+    [{ ...session(), schema_version: 2 }, "unsupported_schema"],
+    [{ ...session(), id: "other" }, "invalid_data"],
+    [{ ...session(), turns: [{ items: [null] }] }, "invalid_data"],
+  ];
+  for (const [stored, error] of cases) {
+    const response = await request(environment({ [sessionKey("session")]: stored }), "/api/sessions/session");
+    assert.equal(response.status, 400);
+    assert.deepEqual(await body(response), { error });
+  }
+
+  const malformed = environment();
+  malformed.SESSIONS.values.set(sessionKey("session"), "not json");
+  const response = await request(malformed, "/api/sessions/session");
+  assert.equal(response.status, 400);
+  assert.deepEqual(await body(response), { error: "invalid_data" });
+});
+
+test("stored indexes are revalidated without reporting data errors as R2 failures", async () => {
+  const valid = { ...DEFAULT_INDEX, generated_at: 1 };
+  for (const [stored, error] of [
+    [{ ...valid, schema_version: 2 }, "unsupported_schema"],
+    [{ ...valid, sessions: [{}] }, "invalid_data"],
+    [{ ...valid, deleted_ids: ["same", "same"] }, "invalid_data"],
+  ]) {
+    const response = await request(environment({ "index.json": stored }), "/api/sessions");
+    assert.equal(response.status, 400);
+    assert.deepEqual(await body(response), { error });
+  }
+
+  const malformed = environment();
+  malformed.SESSIONS.values.set("index.json", "not json");
+  const response = await request(malformed, "/api/sessions");
+  assert.equal(response.status, 400);
+  assert.deepEqual(await body(response), { error: "invalid_data" });
 });
 
 test("delete writes a tombstoned index before deleting the session", async () => {
@@ -215,10 +313,10 @@ test("delete writes a tombstoned index before deleting the session", async () =>
       { id, question: "q", created_at: 1, updated_at: 2, cwd: "/p" },
       { id: "kept", question: "q", created_at: 1, updated_at: 2, cwd: "/p" },
     ],
-    deleted_ids: ["old", id],
+    deleted_ids: ["old"],
     generated_at: 8,
   };
-  const env = environment({ "index.json": index, [`sessions/${id}.json`]: session(id) });
+  const env = environment({ "index.json": index, [sessionKey(id)]: session(id) });
 
   const response = await request(env, `/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   assert.equal(response.status, 200);
@@ -226,14 +324,14 @@ test("delete writes a tombstoned index before deleting the session", async () =>
   assert.deepEqual(env.SESSIONS.operations, [
     ["get", "index.json"],
     ["put", "index.json"],
-    ["delete", `sessions/${id}.json`],
+    ["delete", sessionKey(id)],
   ]);
   assert.deepEqual(JSON.parse(env.SESSIONS.values.get("index.json")), {
     ...index,
     sessions: index.sessions.slice(1),
     deleted_ids: ["old", id],
   });
-  assert.equal(env.SESSIONS.values.has(`sessions/${id}.json`), false);
+  assert.equal(env.SESSIONS.values.has(sessionKey(id)), false);
 });
 
 test("R2 failures return storage errors and delete succeeds only after both writes", async () => {
@@ -242,15 +340,24 @@ test("R2 failures return storage errors and delete succeeds only after both writ
     ["PUT", "/api/sessions/session", "put", session()],
     ["DELETE", "/api/sessions/session", "delete"],
   ]) {
-    const env = environment({ "sessions/session.json": session() });
+    const env = environment({ [sessionKey("session")]: session() });
     env.SESSIONS.fail.add(failure);
     const response = await request(env, path, { method, ...(json && { json }) });
     assert.equal(response.status, 500);
     assert.deepEqual(await body(response), { error: "storage_failure" });
   }
 
-  const env = environment({ "sessions/session.json": session() });
+  const env = environment({ [sessionKey("session")]: session() });
   env.SESSIONS.fail.add("delete");
   await request(env, "/api/sessions/session", { method: "DELETE" });
   assert.deepEqual(JSON.parse(env.SESSIONS.values.get("index.json")).deleted_ids, ["session"]);
+
+  const indexFailure = environment();
+  indexFailure.SESSIONS.fail.add("put");
+  const failed = await request(indexFailure, "/api/sessions/session", { method: "DELETE" });
+  assert.equal(failed.status, 500);
+  assert.deepEqual(indexFailure.SESSIONS.operations, [
+    ["get", "index.json"],
+    ["put", "index.json"],
+  ]);
 });
