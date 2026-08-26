@@ -1,6 +1,13 @@
 include .gitignore
 include .github/workflows/ci.yml
 include .github/workflows/release-linux-x86_64.yml
+include cloud/deploy.sh
+include cloud/package*.json
+include cloud/wrangler.jsonc
 recursive-include packaging *.spec *.txt
 recursive-include scripts *.sh
 recursive-include tests *.py *.sql *.jsonl
+recursive-include cloud/src *.js
+recursive-include cloud/public *
+recursive-include cloud/test *.js
+prune cloud/node_modules

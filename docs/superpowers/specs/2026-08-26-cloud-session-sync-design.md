@@ -74,6 +74,7 @@ sessions/<full-session-id>.json
 ```json
 {
   "schema_version": 1,
+  "generated_at": 1787703600,
   "sessions": [
     {
       "id": "full-session-id",
@@ -87,7 +88,7 @@ sessions/<full-session-id>.json
 }
 ```
 
-The index contains only fields required by list and search views. Session entries are ordered by `updated_at` descending. A deleted ID is excluded from the visible list and from future uploads.
+`generated_at` is the Unix timestamp of the most recent successful index write, or `null` for a new empty index. The index otherwise contains only fields required by list and search views. Session entries are ordered by `updated_at` descending. A deleted ID is excluded from the visible list and from future uploads.
 
 ### Session schema
 

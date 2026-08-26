@@ -46,7 +46,7 @@ jobs:
       - name: Test source distribution
         run: |
           python -m tarfile -e dist/*.tar.gz sdist-test
-          cd sdist-test/codex_session_manager-0.2.0
+          cd sdist-test/codex_session_manager-0.3.0
           PYTHONPATH=src python -m unittest discover -s tests -v
 
       - name: Install wheel
@@ -56,3 +56,27 @@ jobs:
         run: |
           codex-session --help
           codex-session --version
+
+  cloud-tests:
+    name: Cloud / Node.js
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+
+      - name: Install cloud dependencies
+        run: npm ci
+
+      - name: Run cloud tests
+        run: npm test

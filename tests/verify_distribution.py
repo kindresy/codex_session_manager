@@ -13,10 +13,14 @@ PACKAGE_MODULES = {
     "codex_session_manager/__main__.py",
     "codex_session_manager/app_server.py",
     "codex_session_manager/cli.py",
+    "codex_session_manager/cloud_client.py",
+    "codex_session_manager/cloud_format.py",
+    "codex_session_manager/cloud_repository.py",
     "codex_session_manager/compatibility.py",
     "codex_session_manager/models.py",
     "codex_session_manager/preview.py",
     "codex_session_manager/repository.py",
+    "codex_session_manager/sync.py",
     "codex_session_manager/text.py",
     "codex_session_manager/tui.py",
 }
@@ -26,6 +30,19 @@ SDIST_FILES = {
     ".github/workflows/release-linux-x86_64.yml",
     ".gitignore",
     "LICENSE",
+    "cloud/deploy.sh",
+    "cloud/package-lock.json",
+    "cloud/package.json",
+    "cloud/public/app.css",
+    "cloud/public/app.js",
+    "cloud/public/icon.svg",
+    "cloud/public/index.html",
+    "cloud/public/manifest.webmanifest",
+    "cloud/public/sw.js",
+    "cloud/src/worker.js",
+    "cloud/test/app.test.js",
+    "cloud/test/worker.test.js",
+    "cloud/wrangler.jsonc",
     "packaging/codex-session.spec",
     "packaging/requirements-standalone.txt",
     "README.md",
@@ -72,6 +89,9 @@ def verify_sdist(path: Path) -> None:
     required = SDIST_FILES | {f"src/{name}" for name in PACKAGE_MODULES}
     missing = required - relative_names
     assert not missing, f"sdist missing files: {sorted(missing)}"
+    assert not any(
+        name.startswith("cloud/node_modules/") for name in relative_names
+    ), "sdist contains cloud/node_modules"
 
 
 def main(arguments: list[str]) -> int:

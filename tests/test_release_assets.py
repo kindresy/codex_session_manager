@@ -9,7 +9,7 @@ class ReleaseAssetTests(unittest.TestCase):
     def test_project_metadata(self):
         metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         required = (
-            'version = "0.2.0"',
+            'version = "0.3.0"',
             'readme = "README.md"',
             'license = "MIT"',
             'license-files = ["LICENSE"]',
@@ -35,7 +35,7 @@ class ReleaseAssetTests(unittest.TestCase):
         package = (ROOT / "src" / "codex_session_manager" / "__init__.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('__version__ = "0.2.0"', package)
+        self.assertIn('__version__ = "0.3.0"', package)
 
     def test_mit_license(self):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
@@ -64,6 +64,10 @@ class ReleaseAssetTests(unittest.TestCase):
             "pip install --no-deps dist/*.whl",
             "codex-session --help",
             "codex-session --version",
+            "cloud-tests",
+            "actions/setup-node@v4",
+            "npm ci",
+            "npm test",
         )
         for value in required:
             with self.subTest(value=value):
@@ -167,12 +171,38 @@ class ReleaseAssetTests(unittest.TestCase):
 
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("python tests/verify_distribution.py", workflow)
-        self.assertIn("sdist-test/codex_session_manager-0.2.0", workflow)
+        self.assertIn("sdist-test/codex_session_manager-0.3.0", workflow)
         self.assertIn(
             "include .github/workflows/release-linux-x86_64.yml", manifest
         )
         self.assertIn("recursive-include packaging *.spec *.txt", manifest)
         self.assertIn("recursive-include scripts *.sh", manifest)
+        for value in (
+            "include cloud/deploy.sh",
+            "include cloud/package*.json",
+            "include cloud/wrangler.jsonc",
+            "recursive-include cloud/src *.js",
+            "recursive-include cloud/public *",
+            "recursive-include cloud/test *.js",
+            "prune cloud/node_modules",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, manifest)
+
+        for value in (
+            "codex_session_manager/cloud_client.py",
+            "codex_session_manager/cloud_format.py",
+            "codex_session_manager/cloud_repository.py",
+            "codex_session_manager/sync.py",
+            "cloud/deploy.sh",
+            "cloud/package.json",
+            "cloud/package-lock.json",
+            "cloud/src/worker.js",
+            "cloud/public/index.html",
+            "cloud/wrangler.jsonc",
+        ):
+            with self.subTest(distribution_file=value):
+                self.assertIn(f'"{value}"', verifier_text)
 
     def test_readme_public_usage(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -224,6 +254,22 @@ class ReleaseAssetTests(unittest.TestCase):
             "回退",
             "卸载",
             "glibc 2.31",
+            "codex-session sync setup",
+            "codex-session sync",
+            "codex-session sync --all",
+            "codex-session sync status",
+            "codex-session cloud",
+            "PWA",
+            "Bearer token",
+            "retention",
+            "tombstone",
+            "plaintext JSON",
+            "private R2",
+            "manual only",
+            "remote resume",
+            "https://developers.openai.com/codex/app-server/",
+            "https://developers.cloudflare.com/r2/get-started/workers-api/",
+            "https://developers.cloudflare.com/workers/static-assets/",
         )
         for value in required:
             with self.subTest(value=value):
