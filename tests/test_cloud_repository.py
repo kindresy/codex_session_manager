@@ -1,5 +1,6 @@
 import unittest
 
+from codex_session_manager.cloud_client import CloudError
 from codex_session_manager.cloud_repository import (
     CloudPreviewService,
     CloudSessionRepository,
@@ -106,6 +107,98 @@ class CloudRepositoryTests(unittest.TestCase):
         previews.get(changed)
 
         self.assertEqual(cloud.session_calls, ["newest", "newest"])
+
+    def test_invalid_index_containers_and_entries_raise_cloud_error(self):
+        cloud = _Cloud()
+        invalid_sessions = (
+            None,
+            [None],
+            [{}],
+        )
+
+        for sessions in invalid_sessions:
+            with self.subTest(sessions=sessions):
+                cloud.index = {"schema_version": 1, "sessions": sessions}
+                with self.assertRaises(CloudError):
+                    CloudSessionRepository(cloud).list_sessions()
+
+    def test_invalid_index_field_types_raise_cloud_error(self):
+        cloud = _Cloud()
+        valid = cloud.index["sessions"][0]
+        invalid_values = {
+            "id": 1,
+            "question": None,
+            "cwd": [],
+            "created_at": "10",
+            "updated_at": True,
+        }
+
+        for field, value in invalid_values.items():
+            with self.subTest(field=field):
+                cloud.index = {
+                    "schema_version": 1,
+                    "sessions": [{**valid, field: value}],
+                }
+                with self.assertRaises(CloudError):
+                    CloudSessionRepository(cloud).list_sessions()
+
+    def test_invalid_session_containers_raise_cloud_error(self):
+        cloud = _Cloud()
+        session = CloudSessionRepository(cloud).list_sessions()[0]
+        invalid_turns = (
+            None,
+            [None],
+            [{"items": None}],
+            [{"items": [None]}],
+        )
+
+        for turns in invalid_turns:
+            with self.subTest(turns=turns):
+                cloud.session = {**cloud.session, "turns": turns}
+                with self.assertRaises(CloudError):
+                    CloudPreviewService(cloud).get(session)
+
+    def test_invalid_session_field_types_raise_cloud_error(self):
+        cloud = _Cloud()
+        session = CloudSessionRepository(cloud).list_sessions()[0]
+        valid = cloud.session
+        invalid_values = {
+            "id": None,
+            "question": 1,
+            "cwd": {},
+            "created_at": "10",
+            "updated_at": False,
+        }
+
+        for field, value in invalid_values.items():
+            with self.subTest(field=field):
+                cloud.session = {**valid, field: value}
+                with self.assertRaises(CloudError):
+                    CloudPreviewService(cloud).get(session)
+
+    def test_invalid_message_item_fields_raise_cloud_error_but_unknown_types_are_ignored(self):
+        cloud = _Cloud()
+        session = CloudSessionRepository(cloud).list_sessions()[0]
+        invalid_items = (
+            {"type": None, "text": "message"},
+            {"type": "user", "text": None},
+            {"type": "assistant", "text": 1},
+        )
+
+        for item in invalid_items:
+            with self.subTest(item=item):
+                cloud.session = {**cloud.session, "turns": [{"items": [item]}]}
+                with self.assertRaises(CloudError):
+                    CloudPreviewService(cloud).get(session)
+
+        cloud.session = {
+            **cloud.session,
+            "turns": [{"items": [{"type": "future_item", "text": 1}]}],
+        }
+        self.assertEqual(
+            CloudPreviewService(cloud).get(session),
+            Preview("first question", "", ""),
+        )
 
 
 if __name__ == "__main__":

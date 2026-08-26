@@ -279,6 +279,23 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result, 2)
         self.assertIn("service unavailable", errors.getvalue())
 
+    def test_cloud_repository_error_from_tui_is_user_facing(self):
+        with (
+            patch(
+                "codex_session_manager.cli.load_config",
+                return_value=SyncConfig("https://worker.example", "token"),
+            ),
+            patch(
+                "codex_session_manager.cli.run_tui",
+                side_effect=CloudError("Cloud session data is invalid."),
+            ),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            result = main(["cloud"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("Cloud session data is invalid.", errors.getvalue())
+
     def test_codex_present_builds_shared_app_server_compatibility_services(self):
         with (
             patch.dict(os.environ, {"CODEX_HOME": "/tmp/from-env"}),
