@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#213a45">
+    <title>Codex Sessions</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/app.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Cloud archive</p>
+        <h1>Codex Sessions</h1>
+      </div>
+      <button id="change-token" class="quiet" type="button">Token</button>
+    </header>
+
+    <section id="token-panel" class="token-panel" hidden>
+      <form id="token-form">
+        <h2>Connect to your archive</h2>
+        <p>Your sync token stays in this browser and is sent only to this origin.</p>
+        <label for="token-input">Sync token</label>
+        <div class="token-row">
+          <input id="token-input" name="token" type="password" autocomplete="current-password" required>
+          <button type="submit">Connect</button>
+        </div>
+      </form>
+    </section>
+
+    <main id="viewer" class="viewer" hidden>
+      <aside class="session-pane" aria-label="Sessions">
+        <div class="toolbar">
+          <label class="search">
+            <span class="sr-only">Search sessions</span>
+            <input id="search" type="search" placeholder="Search sessions">
+          </label>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <p id="status" class="status" aria-live="polite"></p>
+        <p id="empty-list" class="empty" hidden>No matching sessions.</p>
+        <ul id="session-list" class="session-list"></ul>
+      </aside>
+
+      <section id="detail" class="detail-pane" aria-label="Session detail">
+        <div id="detail-empty" class="detail-empty">Select a session to read it.</div>
+        <div id="detail-content" hidden>
+          <div class="detail-actions">
+            <button id="back" class="back quiet" type="button">← Sessions</button>
+            <button id="delete-session" class="danger quiet" type="button">Delete</button>
+          </div>
+          <header class="detail-header">
+            <h2 id="detail-title"></h2>
+            <p id="detail-meta" class="path"></p>
+          </header>
+          <div id="items" class="items"></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
