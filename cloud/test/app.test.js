@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import * as app from "../public/app.js";
 import { escapeHtml, formatTimestamp, matchSession, renderItems } from "../public/app.js";
 
 const metadata = {
@@ -18,6 +19,13 @@ test("matchSession searches session metadata case-insensitively", () => {
   assert.equal(matchSession(metadata, "SESSION-42"), true);
   assert.equal(matchSession(metadata, "   "), true);
   assert.equal(matchSession(metadata, "missing"), false);
+});
+
+test("shortSessionId returns the first eight characters for session cards", () => {
+  assert.equal(typeof app.shortSessionId, "function");
+  assert.equal(app.shortSessionId("1234567890abcdef"), "12345678");
+  assert.equal(app.shortSessionId("1234567🚀tail"), "1234567🚀");
+  assert.equal(app.shortSessionId("short"), "short");
 });
 
 test("escapeHtml escapes every HTML-significant character", () => {
@@ -66,6 +74,67 @@ test("formatTimestamp accepts Unix seconds and handles absent values", () => {
   assert.equal(formatTimestamp(null), "Unknown time");
   assert.equal(formatTimestamp(Number.MAX_VALUE), "Unknown time");
   assert.notEqual(formatTimestamp(0), "Unknown time");
+});
+
+test("validSessionIndex accepts only schema 1 indexes with a sessions array", () => {
+  assert.equal(typeof app.validSessionIndex, "function");
+  assert.equal(app.validSessionIndex({ schema_version: 1, sessions: [] }), true);
+  assert.equal(app.validSessionIndex({ schema_version: 2, sessions: [] }), false);
+  assert.equal(app.validSessionIndex({ schema_version: 1, sessions: {} }), false);
+  assert.equal(app.validSessionIndex(null), false);
+});
+
+test("sessionListFromIndex rejects invalid successful responses before state replacement", () => {
+  assert.equal(typeof app.sessionListFromIndex, "function");
+  const sessions = [{ id: "kept" }];
+  assert.equal(app.sessionListFromIndex({ schema_version: 1, sessions }), sessions);
+  assert.throws(() => app.sessionListFromIndex({ schema_version: 2, sessions }), /invalid_index/);
+  assert.throws(() => app.sessionListFromIndex({ schema_version: 1, sessions: {} }), /invalid_index/);
+});
+
+test("requestJson identifies unauthorized responses and sends the bearer token", async () => {
+  assert.equal(typeof app.requestJson, "function");
+  let request;
+  const fetcher = async (path, options) => {
+    request = { path, options };
+    return new Response('{"error":"unauthorized"}', {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  await assert.rejects(
+    app.requestJson(fetcher, "bad-token", "/api/sessions"),
+    (error) => error.status === 401 && error.message === "unauthorized",
+  );
+  assert.equal(request.options.headers.get("Authorization"), "Bearer bad-token");
+});
+
+test("isMobileLayout follows a supplied media query without browser globals", () => {
+  assert.equal(typeof app.isMobileLayout, "function");
+  assert.equal(app.isMobileLayout({ matches: true }), true);
+  assert.equal(app.isMobileLayout({ matches: false }), false);
+  assert.equal(app.isMobileLayout(undefined), false);
+});
+
+test("browser startup wires mobile history, accessibility, and unauthorized token reset", async () => {
+  const publicDirectory = new URL("../public/", import.meta.url);
+  const source = await readFile(new URL("app.js", publicDirectory), "utf8");
+  const html = await readFile(new URL("index.html", publicDirectory), "utf8");
+  const css = await readFile(new URL("app.css", publicDirectory), "utf8");
+
+  assert.match(source, /history\.pushState\s*\(/);
+  assert.match(source, /addEventListener\(["']popstate["']/);
+  assert.match(source, /history\.back\s*\(/);
+  assert.match(source, /\.inert\s*=/);
+  assert.match(source, /setAttribute\(["']aria-hidden["']/);
+  assert.match(source, /removeAttribute\(["']aria-hidden["']/);
+  assert.match(source, /\.focus\s*\(/);
+  assert.match(source, /localStorage\.removeItem\(TOKEN_KEY\)/);
+  assert.match(source, /error\.status\s*===\s*401/);
+  assert.match(html, /id="session-pane"/);
+  assert.match(html, /id="token-error"[^>]*aria-live="assertive"/);
+  assert.doesNotMatch(css, /\.detail-pane\.detail-open\s*~\s*\*/);
 });
 
 test("manifest has install metadata and the service worker bypasses APIs", async () => {

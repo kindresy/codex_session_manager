@@ -8,6 +8,40 @@ export function matchSession(session, query) {
   );
 }
 
+export function shortSessionId(id) {
+  return [...String(id ?? "")].slice(0, 8).join("");
+}
+
+export function validSessionIndex(payload) {
+  return payload !== null && payload?.schema_version === 1 && Array.isArray(payload.sessions);
+}
+
+export function sessionListFromIndex(payload) {
+  if (!validSessionIndex(payload)) throw new Error("invalid_index");
+  return payload.sessions;
+}
+
+export function isMobileLayout(mediaQuery) {
+  return Boolean(mediaQuery?.matches);
+}
+
+export async function requestJson(fetcher, token, path, options = {}) {
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  headers.set("Accept", "application/json");
+  const response = await fetcher(path, { ...options, headers, cache: "no-store" });
+  if (response.ok) return response.json();
+  let code = `${response.status}`;
+  try {
+    code = (await response.json()).error || code;
+  } catch {
+    // The HTTP status remains useful when an intermediary returns non-JSON.
+  }
+  const error = new Error(code);
+  error.status = response.status;
+  throw error;
+}
+
 export function escapeHtml(value) {
   return String(value ?? "").replace(
     /[&<>"']/g,
@@ -54,7 +88,9 @@ function startApp() {
       "token-panel",
       "token-form",
       "token-input",
+      "token-error",
       "viewer",
+      "session-pane",
       "search",
       "refresh",
       "change-token",
@@ -75,11 +111,15 @@ function startApp() {
     token: localStorage.getItem(TOKEN_KEY) || "",
     sessions: [],
     selectedId: null,
+    detailHistory: false,
+    returnFocusId: null,
   };
+  const mobileQuery = window.matchMedia("(max-width: 47.99rem)");
 
-  function showTokenSetup() {
+  function showTokenSetup(message = "") {
     elements["token-panel"].hidden = false;
     elements.viewer.hidden = true;
+    elements["token-error"].textContent = message;
     elements["token-input"].value = state.token;
     elements["token-input"].focus();
   }
@@ -95,18 +135,17 @@ function startApp() {
   }
 
   async function api(path, options = {}) {
-    const headers = new Headers(options.headers);
-    headers.set("Authorization", `Bearer ${state.token}`);
-    headers.set("Accept", "application/json");
-    const response = await fetch(path, { ...options, headers, cache: "no-store" });
-    if (response.ok) return response.json();
-    let code = `${response.status}`;
     try {
-      code = (await response.json()).error || code;
-    } catch {
-      // The HTTP status remains useful when an intermediary returns non-JSON.
+      return await requestJson(fetch, state.token, path, options);
+    } catch (error) {
+      if (error.status === 401) {
+        state.token = "";
+        localStorage.removeItem(TOKEN_KEY);
+        clearDetail({ restoreFocus: false, consumeHistory: true });
+        showTokenSetup("Token invalid. Enter a valid sync token.");
+      }
+      throw error;
     }
-    throw new Error(code);
   }
 
   function renderList() {
@@ -117,17 +156,21 @@ function startApp() {
       const item = document.createElement("li");
       const button = document.createElement("button");
       const question = document.createElement("strong");
+      const id = document.createElement("span");
       const metadata = document.createElement("span");
       const updated = document.createElement("time");
       button.type = "button";
       button.className = "session-card";
+      button.dataset.sessionId = session.id;
       button.classList.toggle("selected", session.id === state.selectedId);
       question.textContent = session.question || "Untitled session";
+      id.className = "session-id";
+      id.textContent = shortSessionId(session.id);
       metadata.textContent = session.cwd;
       updated.textContent = formatTimestamp(session.updated_at);
       const date = timestampDate(session.updated_at);
       if (date) updated.dateTime = date.toISOString();
-      button.append(question, metadata, updated);
+      button.append(question, id, metadata, updated);
       button.addEventListener("click", () => selectSession(session));
       item.append(button);
       elements["session-list"].append(item);
@@ -139,8 +182,10 @@ function startApp() {
     setStatus("Refreshing…");
     try {
       const index = await api("/api/sessions");
-      state.sessions = index.sessions;
-      if (state.selectedId && !state.sessions.some((session) => session.id === state.selectedId)) clearDetail();
+      state.sessions = sessionListFromIndex(index);
+      if (state.selectedId && !state.sessions.some((session) => session.id === state.selectedId)) {
+        clearDetail({ consumeHistory: true });
+      }
       renderList();
       setStatus(`${state.sessions.length} session${state.sessions.length === 1 ? "" : "s"}`);
     } catch (error) {
@@ -151,6 +196,8 @@ function startApp() {
   }
 
   async function selectSession(metadata) {
+    const opening = state.selectedId === null;
+    state.returnFocusId = metadata.id;
     state.selectedId = metadata.id;
     renderList();
     elements.detail.classList.add("detail-open");
@@ -159,6 +206,8 @@ function startApp() {
     elements["detail-title"].textContent = metadata.question || "Untitled session";
     elements["detail-meta"].textContent = "Loading…";
     elements.items.replaceChildren();
+    if (opening && isMobileLayout(mobileQuery)) pushDetailHistory();
+    syncDetailAccessibility(true);
     try {
       const session = await api(`/api/sessions/${encodeURIComponent(metadata.id)}`);
       if (state.selectedId !== metadata.id) return;
@@ -172,13 +221,41 @@ function startApp() {
     }
   }
 
-  function clearDetail() {
+  function pushDetailHistory() {
+    if (state.detailHistory) return;
+    history.pushState({ codexSessionDetail: true }, "");
+    state.detailHistory = true;
+  }
+
+  function syncDetailAccessibility(focusDetail = false) {
+    const modal = state.selectedId !== null && isMobileLayout(mobileQuery);
+    elements["session-pane"].inert = modal;
+    if (modal) elements["session-pane"].setAttribute("aria-hidden", "true");
+    else elements["session-pane"].removeAttribute("aria-hidden");
+    if (modal && focusDetail) elements.back.focus();
+  }
+
+  function focusSession(id) {
+    if (!id) return;
+    const button = [...elements["session-list"].querySelectorAll(".session-card")].find(
+      (candidate) => candidate.dataset.sessionId === id,
+    );
+    button?.focus();
+  }
+
+  function clearDetail({ restoreFocus = true, consumeHistory = false } = {}) {
+    const focusId = state.returnFocusId;
+    const hadHistory = consumeHistory && state.detailHistory;
+    state.detailHistory = false;
     state.selectedId = null;
     elements.detail.classList.remove("detail-open");
     elements["detail-content"].hidden = true;
     elements["detail-empty"].hidden = false;
     elements.items.replaceChildren();
     renderList();
+    syncDetailAccessibility();
+    if (restoreFocus) focusSession(focusId);
+    if (hadHistory) history.back();
   }
 
   async function deleteSelected() {
@@ -188,7 +265,7 @@ function startApp() {
     try {
       await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
       state.sessions = state.sessions.filter((entry) => entry.id !== session.id);
-      clearDetail();
+      clearDetail({ consumeHistory: true });
       setStatus("Session deleted.");
     } catch (error) {
       setStatus(`Delete failed: ${error.message}`, true);
@@ -201,14 +278,27 @@ function startApp() {
     event.preventDefault();
     state.token = elements["token-input"].value;
     localStorage.setItem(TOKEN_KEY, state.token);
+    elements["token-error"].textContent = "";
     showViewer();
     refreshSessions();
   });
-  elements["change-token"].addEventListener("click", showTokenSetup);
+  elements["change-token"].addEventListener("click", () => showTokenSetup());
   elements.refresh.addEventListener("click", refreshSessions);
   elements.search.addEventListener("input", renderList);
-  elements.back.addEventListener("click", clearDetail);
+  elements.back.addEventListener("click", () => {
+    if (state.detailHistory) history.back();
+    else clearDetail();
+  });
   elements["delete-session"].addEventListener("click", deleteSelected);
+  window.addEventListener("popstate", () => {
+    if (!state.detailHistory) return;
+    state.detailHistory = false;
+    clearDetail();
+  });
+  mobileQuery.addEventListener("change", () => {
+    if (state.selectedId !== null && isMobileLayout(mobileQuery)) pushDetailHistory();
+    syncDetailAccessibility(state.selectedId !== null);
+  });
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
   if (state.token) {

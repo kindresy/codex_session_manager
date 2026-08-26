@@ -23,6 +23,7 @@
       <form id="token-form">
         <h2>Connect to your archive</h2>
         <p>Your sync token stays in this browser and is sent only to this origin.</p>
+        <p id="token-error" class="token-error" aria-live="assertive"></p>
         <label for="token-input">Sync token</label>
         <div class="token-row">
           <input id="token-input" name="token" type="password" autocomplete="current-password" required>
@@ -32,7 +33,7 @@
     </section>
 
     <main id="viewer" class="viewer" hidden>
-      <aside class="session-pane" aria-label="Sessions">
+      <aside id="session-pane" class="session-pane" aria-label="Sessions">
         <div class="toolbar">
           <label class="search">
             <span class="sr-only">Search sessions</span>

@@ -44,6 +44,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .token-panel { max-width: 34rem; margin: 12vh auto; padding: 1rem; }
 .token-panel form { padding: 1.5rem; border: 1px solid #cfdbd8; border-radius: .8rem; background: white; box-shadow: 0 .4rem 1.4rem #203a4514; }
 .token-panel label { display: block; margin-bottom: .35rem; font-weight: 650; }
+.token-error { min-height: 1.5rem; color: #a02929; }
 .token-row { display: flex; gap: .6rem; }
 .token-row input { min-width: 0; flex: 1; }
 
@@ -68,6 +69,7 @@ input:focus, button:focus-visible, summary:focus-visible { outline: 3px solid #6
 .session-card { width: 100%; display: grid; gap: .15rem; padding: .75rem; text-align: left; color: #17252b; border: 1px solid #cedbd8; background: white; }
 .session-card:hover, .session-card.selected { border-color: #4f928a; background: #eaf4f1; }
 .session-card span, .session-card time { overflow: hidden; color: #5b706d; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.session-card .session-id { color: #28766f; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .empty, .detail-empty { color: #627571; text-align: center; }
 
 .detail-pane { display: none; padding: .9rem; }
@@ -91,7 +93,6 @@ pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (max-width: 47.99rem) {
   .detail-pane.detail-open { position: fixed; inset: 4.5rem 0 0; z-index: 2; overflow-y: auto; background: #f2f5f3; }
-  .detail-pane.detail-open ~ * { display: none; }
 }
 
 @media (min-width: 48rem) {
