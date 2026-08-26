@@ -290,9 +290,9 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(clean_user_text("  帮我实现功能  "), "帮我实现功能")
 
     def test_clean_user_text_fails_closed_for_unterminated_platform_wrapper(self):
-        self.assertEqual(
-            clean_user_text("<future_instructions>secret\n真正的问题"), ""
-        )
+        for tag in ("future_instructions", "future_platform_instructions", "future_platform_context"):
+            with self.subTest(tag=tag):
+                self.assertEqual(clean_user_text(f"<{tag}>secret\n真正的问题"), "")
 
     def test_clean_user_text_preserves_prompt_after_injected_context(self):
         combined = (

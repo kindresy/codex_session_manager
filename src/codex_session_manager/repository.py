@@ -28,7 +28,7 @@ _INJECTED_BLOCKS = (
         re.DOTALL,
     ),
     re.compile(
-        r"<(?P<tag>(?:[a-z][a-z0-9-]*(?:_instructions|_context)|"
+        r"<(?P<tag>(?:[a-z][a-z0-9_-]*(?:_instructions|_context)|"
         r"recommended_plugins|claude-mem-context|permissions|"
         r"collaboration_mode|multi_agent_mode))\b[^>]*>.*?</(?P=tag)>\s*",
         re.DOTALL,
@@ -36,7 +36,7 @@ _INJECTED_BLOCKS = (
 )
 
 _INJECTED_OPENING = re.compile(
-    r"<(?:[a-z][a-z0-9-]*(?:_instructions|_context)|recommended_plugins|"
+    r"<(?:[a-z][a-z0-9_-]*(?:_instructions|_context)|recommended_plugins|"
     r"claude-mem-context|permissions|collaboration_mode|multi_agent_mode)\b"
 )
 
