@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-export WRANGLER_HIDE_BANNER=1
+export WRANGLER_HIDE_BANNER=true
 
 bucket_name='codex-session-history'
 

@@ -35,7 +35,7 @@ class CloudDeployTests(unittest.TestCase):
             "npx",
             f"""
 printf '%s\\n' \"$*\" >> \"$CALL_LOG\"
-if [ \"${{WRANGLER_HIDE_BANNER:-}}\" != 1 ]; then
+if [ \"${{WRANGLER_HIDE_BANNER:-}}\" != true ]; then
   printf 'WRANGLER_HIDE_BANNER was not set\\n' >&2
   exit 98
 fi
@@ -116,7 +116,7 @@ esac
         self.assertIn("stty -echo", source)
         self.assertIn("trap", source)
         self.assertIn("set +x", source)
-        self.assertIn("export WRANGLER_HIDE_BANNER=1", source)
+        self.assertIn("export WRANGLER_HIDE_BANNER=true", source)
 
     def test_pins_local_wrangler_in_the_lockfile(self):
         package = json.loads(PACKAGE.read_text(encoding="utf-8"))
