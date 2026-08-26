@@ -303,6 +303,21 @@ class AppServerClientTests(unittest.TestCase):
             messages[-1]["params"], {"threadId": "thread-one", "includeTurns": True}
         )
 
+    def test_read_thread_rejects_malformed_response_containers(self):
+        client, _ = self.make_client()
+        try:
+            for result, expected in (
+                ([], "invalid thread/read response"),
+                ({}, "invalid thread/read thread"),
+                ({"thread": {}}, "invalid thread/read turns"),
+            ):
+                with self.subTest(result=result):
+                    with patch.object(client, "_request", return_value=result):
+                        with self.assertRaisesRegex(AppServerError, expected):
+                            client.read_thread("thread-one")
+        finally:
+            client.close()
+
     def test_utf8_streams_accept_raw_unicode_json(self):
         calls = []
         real_popen = subprocess.Popen

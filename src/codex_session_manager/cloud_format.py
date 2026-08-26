@@ -93,7 +93,7 @@ def _command_execution(item: dict[str, Any]) -> list[dict[str, Any]] | None:
         or not isinstance(cwd, str)
         or not isinstance(status, str)
         or not isinstance(output, str)
-        or type(exit_code) is not int
+        or (exit_code is not None and type(exit_code) is not int)
     ):
         return None
     return [

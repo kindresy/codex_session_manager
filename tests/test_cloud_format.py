@@ -156,3 +156,42 @@ class CloudFormatTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_preserves_a_null_command_exit_code(self):
+        session = Session("id", "question", "/work", 1.0, 2.0, "")
+
+        payload = normalize_cloud_session(
+            session,
+            {
+                "thread": {
+                    "turns": [
+                        {
+                            "items": [
+                                {
+                                    "type": "commandExecution",
+                                    "command": "sleep 1",
+                                    "cwd": "/work",
+                                    "status": "inProgress",
+                                    "aggregatedOutput": "still running",
+                                    "exitCode": None,
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+        )
+
+        self.assertEqual(
+            payload["turns"][0]["items"],
+            [
+                {
+                    "type": "command",
+                    "command": "sleep 1",
+                    "cwd": "/work",
+                    "status": "inProgress",
+                    "output": "still running",
+                    "exit_code": None,
+                }
+            ],
+        )
