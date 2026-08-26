@@ -71,7 +71,7 @@ def verify_archive(path: Path, forbidden_root: Path) -> None:
         executable = by_name["codex-session-manager/codex-session"]
         assert executable.isfile(), "standalone executable must be a regular file"
         assert executable.mode & 0o111, "standalone executable is not executable"
-        root_bytes = str(forbidden_root.resolve()).encode()
+        root_bytes = (str(forbidden_root.resolve()).rstrip("/") + "/").encode()
         for member in members:
             parsed = PurePosixPath(member.name)
             assert not parsed.is_absolute(), f"absolute archive path: {member.name}"

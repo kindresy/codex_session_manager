@@ -80,11 +80,19 @@ class StandaloneVerifierTests(unittest.TestCase):
     def test_rejects_build_path_in_member_content(self):
         forbidden_root = self.root / "private-build"
         member = tarfile.TarInfo("codex-session-manager/data.bin")
-        payload = b"prefix" + os.fsencode(forbidden_root.resolve()) + b"suffix"
+        payload = b"prefix" + os.fsencode(forbidden_root.resolve()) + b"/src/module.py"
         member.size = len(payload)
         self.write_archive(extras=((member, payload),))
         with self.assertRaisesRegex(AssertionError, "build path"):
             verify_archive(self.archive, forbidden_root)
+
+    def test_accepts_build_root_prefix_inside_an_unrelated_url(self):
+        member = tarfile.TarInfo("codex-session-manager/data.bin")
+        payload = b"https://developers.example/workers/static-assets/"
+        member.size = len(payload)
+        self.write_archive(extras=((member, payload),))
+
+        verify_archive(self.archive, Path("/work"))
 
 
 if __name__ == "__main__":
