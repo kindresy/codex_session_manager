@@ -320,16 +320,22 @@ def _draw_chrome(
     status: str,
     search_prompt: str | None = None,
     status_error: bool = False,
+    allow_select: bool = True,
 ) -> None:
     rows, cols = stdscr.getmaxyx()
     _safe_addstr(stdscr, 0, 1, "CODEX SESSIONS", palette.title)
     count_label = f"{count} sessions"
     _safe_addstr(stdscr, 0, max(1, cols - len(count_label) - 2), count_label, palette.muted)
+    help_text = (
+        "j/k 移动  / 搜索  n/N 匹配  Ctrl-d/u 滚动  r 刷新  Enter 打开  q 退出"
+        if allow_select
+        else "j/k 移动  / 搜索  n/N 匹配  Ctrl-d/u 滚动  r 刷新  云端只读  q 退出"
+    )
     footer = (
         clip_display_left(f"/{search_prompt}", max(1, cols - 2))
         if search_prompt is not None
         else status
-        or "j/k 移动  / 搜索  n/N 匹配  Ctrl-d/u 滚动  r 刷新  Enter 打开  q 退出"
+        or help_text
     )
     attr = palette.title if search_prompt is not None else palette.error if status_error else palette.time
     _safe_addstr(stdscr, rows - 1, 1, footer, attr)
@@ -377,6 +383,8 @@ def _event_loop(
     previews: Previews,
     use_color: bool,
     resume_error: str = "",
+    allow_select: bool = True,
+    empty_message: str | None = None,
 ) -> str | None:
     try:
         curses.curs_set(0)
@@ -417,12 +425,17 @@ def _event_loop(
             display_status,
             search_input,
             display_error,
+            allow_select,
         )
 
         if layout.mode == "small":
             _draw_message(stdscr, "终端尺寸不足，需要至少 60×20", palette)
         elif not sessions:
-            _draw_message(stdscr, "没有找到可恢复的 Codex CLI 会话，按 r 刷新", palette)
+            _draw_message(
+                stdscr,
+                empty_message or "没有找到可恢复的 Codex CLI 会话，按 r 刷新",
+                palette,
+            )
         else:
             assert selected is not None and preview is not None
             list_window = stdscr.derwin(*layout.list_rect[2:], *layout.list_rect[:2])
@@ -482,6 +495,9 @@ def _event_loop(
             status = _match_status(search, state.selected)
             continue
         if action == "select" and sessions:
+            if not allow_select:
+                status = "云端会话为只读，无法恢复"
+                continue
             if resume_error:
                 status = resume_error
                 status_error = True
@@ -511,5 +527,15 @@ def run_tui(
     *,
     use_color: bool = True,
     resume_error: str = "",
+    allow_select: bool = True,
+    empty_message: str | None = None,
 ) -> str | None:
-    return curses.wrapper(_event_loop, repository, previews, use_color, resume_error)
+    return curses.wrapper(
+        _event_loop,
+        repository,
+        previews,
+        use_color,
+        resume_error,
+        allow_select,
+        empty_message,
+    )

@@ -21,6 +21,7 @@ from .cloud_client import (
     load_config,
     save_config,
 )
+from .cloud_repository import CloudPreviewService, CloudSessionRepository
 from .compatibility import (
     CompatibilityState,
     CompatiblePreviewService,
@@ -63,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_commands = sync_parser.add_subparsers(dest="sync_command")
     sync_commands.add_parser("setup", help="配置云端 Worker 和访问令牌")
     sync_commands.add_parser("status", help="检查云端同步状态")
-    commands.add_parser("cloud", help="浏览云端会话（即将推出）")
+    commands.add_parser("cloud", help="只读浏览云端会话")
     return parser
 
 
@@ -194,12 +195,32 @@ def _run_sync(args: argparse.Namespace, codex_home: Path) -> int:
         return 2
 
 
+def _browse_cloud(no_color: bool) -> int:
+    try:
+        cloud = CloudClient(load_config(default_config_path()))
+        run_tui(
+            CloudSessionRepository(cloud),
+            CloudPreviewService(cloud),
+            use_color=not no_color,
+            allow_select=False,
+            empty_message="云端没有会话，按 r 刷新",
+        )
+    except KeyboardInterrupt:
+        return 130
+    except CloudError as error:
+        print(f"错误：{error}", file=sys.stderr)
+        return 2
+    except (OSError, curses.error) as error:
+        print(f"错误：无法启动终端界面：{error}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "cloud":
+        return _browse_cloud(args.no_color)
     codex_home = resolve_codex_home(args.codex_home)
     if args.command == "sync":
         return _run_sync(args, codex_home)
-    if args.command == "cloud":
-        print("错误：cloud 浏览功能尚未实现", file=sys.stderr)
-        return 2
     return _browse_local(codex_home, args.no_color)

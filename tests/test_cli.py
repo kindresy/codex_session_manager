@@ -241,6 +241,44 @@ class CliTests(unittest.TestCase):
         self.assertIn("protocol failed", errors.getvalue())
         client_type.return_value.close.assert_called_once_with()
 
+    def test_cloud_browsing_uses_configured_client_in_read_only_mode_without_codex(self):
+        config = SyncConfig("https://worker.example", "token")
+        with (
+            patch("codex_session_manager.cli.load_config", return_value=config),
+            patch("codex_session_manager.cli.CloudClient") as cloud_type,
+            patch("codex_session_manager.cli.CloudSessionRepository") as repository_type,
+            patch("codex_session_manager.cli.CloudPreviewService") as preview_type,
+            patch("codex_session_manager.cli.run_tui", return_value=None) as run_tui,
+            patch("codex_session_manager.cli.shutil.which") as which,
+        ):
+            result = main(["--no-color", "cloud"])
+
+        self.assertEqual(result, 0)
+        cloud_type.assert_called_once_with(config)
+        repository_type.assert_called_once_with(cloud_type.return_value)
+        preview_type.assert_called_once_with(cloud_type.return_value)
+        run_tui.assert_called_once_with(
+            repository_type.return_value,
+            preview_type.return_value,
+            use_color=False,
+            allow_select=False,
+            empty_message="云端没有会话，按 r 刷新",
+        )
+        which.assert_not_called()
+
+    def test_cloud_quit_is_success_and_cloud_error_is_user_facing(self):
+        with (
+            patch(
+                "codex_session_manager.cli.load_config",
+                side_effect=CloudError("service unavailable"),
+            ),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            result = main(["cloud"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("service unavailable", errors.getvalue())
+
     def test_codex_present_builds_shared_app_server_compatibility_services(self):
         with (
             patch.dict(os.environ, {"CODEX_HOME": "/tmp/from-env"}),

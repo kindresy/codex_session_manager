@@ -176,6 +176,59 @@ class ViewStateTests(unittest.TestCase):
         statuses = [call.args[3] for call in chrome.call_args_list]
         self.assertIn("找不到 codex", statuses)
 
+    def test_read_only_mode_keeps_browser_open_after_enter(self):
+        session = Session("12345678-abcd", "问题", "/tmp", 1.0, 2.0, "")
+
+        class FakeScreen:
+            def __init__(self):
+                self.keys = iter((10, ord("q")))
+
+            def keypad(self, _enabled):
+                pass
+
+            def getmaxyx(self):
+                return (40, 140)
+
+            def erase(self):
+                pass
+
+            def noutrefresh(self):
+                pass
+
+            def get_wch(self):
+                return next(self.keys)
+
+            def derwin(self, *_args):
+                return object()
+
+        class Repository:
+            def list_sessions(self):
+                return [session]
+
+        class Previews:
+            def get(self, _session):
+                return Preview("问题", "问题", "回答")
+
+        with (
+            patch("codex_session_manager.tui.curses.curs_set"),
+            patch("codex_session_manager.tui.curses.doupdate"),
+            patch("codex_session_manager.tui._init_palette"),
+            patch("codex_session_manager.tui._draw_list"),
+            patch("codex_session_manager.tui._draw_preview", return_value=0),
+            patch("codex_session_manager.tui._draw_chrome") as chrome,
+        ):
+            selected = _event_loop(
+                FakeScreen(),
+                Repository(),
+                Previews(),
+                True,
+                allow_select=False,
+            )
+
+        self.assertIsNone(selected)
+        statuses = [call.args[3] for call in chrome.call_args_list]
+        self.assertIn("云端会话为只读，无法恢复", statuses)
+
 
 class ChromeTests(unittest.TestCase):
     class FakeScreen:
@@ -206,6 +259,22 @@ class ChromeTests(unittest.TestCase):
         for key in (curses.KEY_BACKSPACE, 8, 127, "\b", "\x7f"):
             with self.subTest(key=key):
                 self.assertTrue(_is_backspace(key))
+
+    def test_read_only_footer_does_not_offer_enter_to_open(self):
+        palette = Palette(title=11, time=22, muted=33, error=44)
+
+        with patch("codex_session_manager.tui._safe_addstr") as addstr:
+            _draw_chrome(
+                self.FakeScreen(),
+                3,
+                palette,
+                "",
+                allow_select=False,
+            )
+
+        footer = addstr.call_args_list[-1].args[3]
+        self.assertIn("云端只读", footer)
+        self.assertNotIn("Enter 打开", footer)
 
 
 class SearchEventLoopTests(unittest.TestCase):
@@ -446,6 +515,26 @@ class SearchEventLoopTests(unittest.TestCase):
         self.assertIsNone(selected)
         self.assertEqual(chrome.call_args_list[0].args[3], "在 PATH 中找不到 codex")
         self.assertTrue(chrome.call_args_list[0].args[5])
+
+    def test_custom_empty_message_is_displayed(self):
+        repository = self.Repository([])
+        with (
+            patch("codex_session_manager.tui.curses.curs_set"),
+            patch("codex_session_manager.tui.curses.doupdate"),
+            patch("codex_session_manager.tui._init_palette"),
+            patch("codex_session_manager.tui._draw_message") as message,
+            patch("codex_session_manager.tui._draw_chrome"),
+        ):
+            selected = _event_loop(
+                self.FakeScreen(("q",)),
+                repository,
+                self.Previews(),
+                True,
+                empty_message="云端没有会话，按 r 刷新",
+            )
+
+        self.assertIsNone(selected)
+        self.assertEqual(message.call_args.args[1], "云端没有会话，按 r 刷新")
 
 
 class FormattingTests(unittest.TestCase):
