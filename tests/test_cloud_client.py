@@ -171,6 +171,19 @@ class CloudClientTests(unittest.TestCase):
                 with self.assertRaisesRegex(CloudError, "invalid"):
                     CloudClient(SyncConfig(url, "secret"))
 
+    def test_rejects_plain_http_for_non_loopback_workers(self):
+        for url in (
+            "http://worker.example",
+            "http://192.168.1.10:8787",
+            "http://127.0.0.2:8787",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaisesRegex(CloudError, "invalid"):
+                    CloudClient(SyncConfig(url, "secret"))
+
+        for host in ("localhost", "127.0.0.1", "[::1]"):
+            CloudClient(SyncConfig(f"http://{host}:8787", "secret"))
+
     def test_public_input_errors_are_cloud_errors(self):
         with self.assertRaisesRegex(CloudError, "invalid"):
             CloudClient(SyncConfig("http://[::1", "secret"))

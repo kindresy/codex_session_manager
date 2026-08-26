@@ -25,6 +25,7 @@ class Session:
     created_at: float
     last_opened_at: float
     rollout_path: str
+    updated_at: float | None = None
 
     @property
     def short_id(self) -> str:
@@ -33,6 +34,11 @@ class Session:
     @property
     def directory_name(self) -> str:
         return Path(self.cwd).name or self.cwd
+
+    @property
+    def content_updated_at(self) -> float:
+        """Timestamp used to detect content changes during cloud sync."""
+        return self.last_opened_at if self.updated_at is None else self.updated_at
 
 
 @dataclass(frozen=True, slots=True)

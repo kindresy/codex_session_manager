@@ -6,14 +6,15 @@ from codex_session_manager.models import Session
 from codex_session_manager.sync import SyncResult, sync_sessions
 
 
-def _session(session_id, updated_at, question=None):
+def _session(session_id, updated_at, question=None, last_opened_at=None):
     return Session(
         session_id,
         question or f"question {session_id}",
         f"/work/{session_id}",
         updated_at - 10,
-        updated_at,
+        updated_at if last_opened_at is None else last_opened_at,
         "",
+        updated_at,
     )
 
 
@@ -109,6 +110,21 @@ class SyncSessionsTests(unittest.TestCase):
             [entry["id"] for entry in cloud.index_writes[0]["sessions"]],
             ["changed", "same"],
         )
+
+    def test_uploads_when_content_changes_without_new_recency(self):
+        app_server = _AppServer([_session("changed", 30, last_opened_at=20)])
+        cloud = _Cloud(
+            {
+                "schema_version": 1,
+                "sessions": [_entry("changed", 20)],
+                "deleted_ids": [],
+            }
+        )
+
+        result = sync_sessions(app_server, cloud)
+
+        self.assertEqual(result, SyncResult(uploaded=1, skipped=0, failed=()))
+        self.assertEqual(cloud.uploads[0]["updated_at"], 30)
 
     def test_force_all_reuploads_unchanged_sessions(self):
         app_server = _AppServer([_session("same", 20)])

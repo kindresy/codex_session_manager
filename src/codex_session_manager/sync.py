@@ -39,7 +39,7 @@ def sync_sessions(
         if session.id in deleted_ids or (
             not force_all
             and remote is not None
-            and session.last_opened_at <= remote["updated_at"]
+            and session.content_updated_at <= remote["updated_at"]
         ):
             skipped += 1
             continue

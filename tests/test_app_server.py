@@ -32,6 +32,7 @@ class AppServerParserTests(unittest.TestCase):
                 "path": "/tmp/rollout.jsonl",
                 "createdAt": 1_700_000_000_000,
                 "recencyAt": 1_700_000_100,
+                "updatedAt": 1_700_000_200,
                 "futureField": {"safe": True},
             }
         )
@@ -42,6 +43,7 @@ class AppServerParserTests(unittest.TestCase):
         self.assertEqual(session.rollout_path, "/tmp/rollout.jsonl")
         self.assertEqual(session.created_at, 1_700_000_000.0)
         self.assertEqual(session.last_opened_at, 1_700_000_100.0)
+        self.assertEqual(session.updated_at, 1_700_000_200.0)
 
     def test_parse_thread_derives_clean_first_user_question_without_preview(self):
         session = parse_thread(

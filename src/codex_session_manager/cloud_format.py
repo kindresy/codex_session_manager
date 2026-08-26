@@ -24,7 +24,7 @@ def normalize_cloud_session(session: Session, response: Any) -> dict[str, Any]:
         "id": session.id,
         "question": session.first_question,
         "created_at": session.created_at,
-        "updated_at": session.last_opened_at,
+        "updated_at": session.content_updated_at,
         "cwd": session.cwd,
         "turns": [{"items": _normalize_turn(turn)} for turn in turns],
     }

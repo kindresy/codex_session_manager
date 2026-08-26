@@ -13,6 +13,7 @@ class CloudFormatTests(unittest.TestCase):
             created_at=1_700_000_000.0,
             last_opened_at=1_700_000_100.0,
             rollout_path="",
+            updated_at=1_700_000_200.0,
         )
 
         payload = normalize_cloud_session(
@@ -70,7 +71,7 @@ class CloudFormatTests(unittest.TestCase):
                 "id": "thread-123",
                 "question": "保留的问题",
                 "created_at": 1_700_000_000.0,
-                "updated_at": 1_700_000_100.0,
+                "updated_at": 1_700_000_200.0,
                 "cwd": "/work/project",
                 "turns": [
                     {

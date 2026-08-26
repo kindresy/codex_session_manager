@@ -66,9 +66,20 @@ class CloudClient:
         config = _config_from_value({"worker_url": config.worker_url, "token": config.token})
         try:
             parsed = urlparse(config.worker_url)
+            hostname = parsed.hostname
         except (UnicodeError, ValueError) as error:
             raise CloudError("Cloud worker URL is invalid.") from error
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc or "?" in config.worker_url or "#" in config.worker_url:
+        loopback_http = parsed.scheme == "http" and hostname in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }
+        if (
+            (parsed.scheme != "https" and not loopback_http)
+            or not parsed.netloc
+            or "?" in config.worker_url
+            or "#" in config.worker_url
+        ):
             raise CloudError("Cloud worker URL is invalid.")
         self._worker_url = config.worker_url.rstrip("/")
         self._token = config.token

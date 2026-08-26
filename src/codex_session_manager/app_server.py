@@ -91,9 +91,14 @@ def parse_thread(value: Any) -> Session:
     cwd = _string(thread.get("cwd"), "thread cwd", allow_empty=True)
     created_at = _timestamp(thread.get("createdAt"), "thread creation time")
     recency_value = thread.get("recencyAt")
+    updated_value = thread.get("updatedAt")
     last_opened_at = _timestamp(
-        thread.get("updatedAt") if recency_value is None else recency_value,
+        updated_value if recency_value is None else recency_value,
         "thread recency time",
+    )
+    updated_at = _timestamp(
+        recency_value if updated_value is None else updated_value,
+        "thread update time",
     )
     path = thread.get("path")
     if path is not None and not isinstance(path, str):
@@ -116,6 +121,7 @@ def parse_thread(value: Any) -> Session:
         created_at=created_at,
         last_opened_at=last_opened_at,
         rollout_path=path or "",
+        updated_at=updated_at,
     )
 
 
