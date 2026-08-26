@@ -22,7 +22,11 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 cd "$cloud_dir"
-npx --no-install wrangler login
+if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ]; then
+    npx --no-install wrangler login --device
+else
+    npx --no-install wrangler login
+fi
 
 if bucket_output=$(npx --no-install wrangler r2 bucket create codex-session-history 2>&1); then
     :

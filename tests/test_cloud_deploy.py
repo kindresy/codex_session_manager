@@ -40,7 +40,7 @@ if [ \"${{WRANGLER_HIDE_BANNER:-}}\" != true ]; then
   exit 98
 fi
 case \"$*\" in
-  '--no-install wrangler login')
+  '--no-install wrangler login'|'--no-install wrangler login --device')
     exit \"${{LOGIN_STATUS:-0}}\"
     ;;
   '--no-install wrangler r2 bucket create {BUCKET}')
@@ -77,6 +77,8 @@ esac
 
     def run_deploy(self, token: str = "secret-token", **environment: str):
         command_environment = os.environ.copy()
+        command_environment.pop("SSH_CONNECTION", None)
+        command_environment.pop("SSH_TTY", None)
         command_environment.update(
             {
                 "PATH": str(self.bin),
@@ -145,6 +147,14 @@ esac
         self.assertNotIn(token, output)
         self.assertIn("https://example.workers.dev", result.stdout)
         self.assertIn("codex-session sync setup", result.stdout)
+
+    def test_ssh_session_uses_device_login(self):
+        result = self.run_deploy(SSH_CONNECTION="client 123 server 22")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.calls()[0], "--no-install wrangler login --device"
+        )
 
     def test_real_wrapper_existing_bucket_message_continues_with_private_access(self):
         result = self.run_deploy(
