@@ -195,15 +195,24 @@ class AppServerClient:
 
     def get_preview(self, session: Session) -> Preview:
         """Read the latest user and agent messages for a selected session."""
-        result = self._request(
-            "thread/read", {"threadId": session.id, "includeTurns": True}
-        )
+        result = self.read_thread(session.id)
         parsed = parse_preview(result)
         return Preview(
             first_question=session.first_question or parsed.first_question,
             latest_user=parsed.latest_user,
             latest_assistant=parsed.latest_assistant,
         )
+
+    def read_thread(self, session_id: str) -> dict[str, Any]:
+        """Read a complete thread for callers that need all supported items."""
+        result = self._request(
+            "thread/read", {"threadId": session_id, "includeTurns": True}
+        )
+        response = _object(result, "thread/read response")
+        thread = _object(response.get("thread"), "thread/read thread")
+        if not isinstance(thread.get("turns"), list):
+            raise AppServerError("invalid thread/read turns")
+        return response
 
     def close(self) -> None:
         """Stop the child process; this operation may be safely repeated."""

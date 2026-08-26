@@ -288,6 +288,21 @@ class AppServerClientTests(unittest.TestCase):
         self.assertEqual(messages[4]["params"], {"threadId": "thread-two", "includeTurns": True})
         self.assertTrue(all(entry["codex_home"] == str(home) for entry in self.requests(home)))
 
+    def test_read_thread_returns_the_complete_thread_read_result(self):
+        client, home = self.make_client()
+        try:
+            result = client.read_thread("thread-one")
+        finally:
+            client.close()
+
+        self.assertIn("thread", result)
+        self.assertEqual(result["thread"]["turns"][0]["items"][0]["type"], "userMessage")
+        messages = [entry["message"] for entry in self.requests(home)]
+        self.assertEqual(messages[-1]["method"], "thread/read")
+        self.assertEqual(
+            messages[-1]["params"], {"threadId": "thread-one", "includeTurns": True}
+        )
+
     def test_utf8_streams_accept_raw_unicode_json(self):
         calls = []
         real_popen = subprocess.Popen
